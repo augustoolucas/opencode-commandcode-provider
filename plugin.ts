@@ -6,14 +6,6 @@ export default async function commandcodePlugin() {
         {
           type: "api",
           label: "API Key",
-          prompts: [
-            {
-              type: "text",
-              key: "key",
-              message: "Enter your Command Code API key",
-              placeholder: "user_...",
-            },
-          ],
           authorize: async (inputs) => {
             const key = inputs?.key?.trim()
             if (!key) return { type: "failed" as const }
