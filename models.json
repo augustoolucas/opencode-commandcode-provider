@@ -1,9 +1,9 @@
 [
   {
-    "id": "claude-haiku-4-5",
+    "id": "claude-haiku-4-5-20251001",
     "name": "Claude Haiku 4.5",
     "tier": "premium",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
       "input": 1,
@@ -20,7 +20,7 @@
     "id": "claude-opus-4-6",
     "name": "Claude Opus 4.6",
     "tier": "premium",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
       "input": 5,
@@ -46,7 +46,7 @@
       "cache_write": 6.25
     },
     "limit": {
-      "context": 200000,
+      "context": 1000000,
       "output": 32000
     }
   },
@@ -63,7 +63,7 @@
       "cache_write": 3.75
     },
     "limit": {
-      "context": 200000,
+      "context": 1000000,
       "output": 16000
     }
   },
@@ -111,7 +111,7 @@
       "cache_read": 0.5
     },
     "limit": {
-      "context": 256000,
+      "context": 400000,
       "output": 128000
     }
   },
@@ -127,7 +127,7 @@
       "cache_read": 0.25
     },
     "limit": {
-      "context": 256000,
+      "context": 400000,
       "output": 128000
     }
   },
@@ -135,7 +135,7 @@
     "id": "gpt-5.4-mini",
     "name": "GPT-5.4 Mini",
     "tier": "premium",
-    "reasoning": false,
+    "reasoning": true,
     "tool_call": true,
     "cost": {
       "input": 0.75,
@@ -143,7 +143,7 @@
       "cache_read": 0.075
     },
     "limit": {
-      "context": 256000,
+      "context": 400000,
       "output": 128000
     }
   },
@@ -199,12 +199,11 @@
     "id": "zai-org/GLM-5",
     "name": "GLM-5",
     "tier": "open-source",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
-      "input": 1,
-      "output": 3.2,
-      "cache_read": 0.2
+      "input": 0.95,
+      "output": 3.15
     },
     "limit": {
       "context": 200000,
@@ -215,7 +214,7 @@
     "id": "zai-org/GLM-5.1",
     "name": "GLM-5.1",
     "tier": "open-source",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
       "input": 1.4,
@@ -231,15 +230,14 @@
     "id": "moonshotai/Kimi-K2.5",
     "name": "Kimi K2.5",
     "tier": "open-source",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
       "input": 0.6,
-      "output": 3,
-      "cache_read": 0.1
+      "output": 3
     },
     "limit": {
-      "context": 262144,
+      "context": 256000,
       "output": 131072
     }
   },
@@ -247,7 +245,7 @@
     "id": "moonshotai/Kimi-K2.6",
     "name": "Kimi K2.6",
     "tier": "open-source",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
       "input": 0.95,
@@ -255,7 +253,7 @@
       "cache_read": 0.16
     },
     "limit": {
-      "context": 262144,
+      "context": 256000,
       "output": 131072
     }
   },
@@ -263,15 +261,14 @@
     "id": "MiniMaxAI/MiniMax-M2.5",
     "name": "MiniMax M2.5",
     "tier": "open-source",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
-      "input": 0.27,
-      "output": 0.95,
-      "cache_read": 0.03
+      "input": 0.5,
+      "output": 2
     },
     "limit": {
-      "context": 1000000,
+      "context": 200000,
       "output": 131072
     }
   },
@@ -279,7 +276,7 @@
     "id": "MiniMaxAI/MiniMax-M2.7",
     "name": "MiniMax M2.7",
     "tier": "open-source",
-    "reasoning": true,
+    "reasoning": false,
     "tool_call": true,
     "cost": {
       "input": 0.3,

@@ -1,19 +1,12 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs"
 import { join } from "path"
 import { homedir } from "os"
 
-const MODELS_URL = "https://commandcode.ai/docs/reference/models"
-const PRICING_URL = "https://commandcode.ai/docs/resources/pricing-limits"
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const MODELS_JSON = join(PROJECT_ROOT, "models.json")
 const GLOBAL_CONFIG = join(homedir(), ".config", "opencode", "opencode.jsonc")
-
-interface CostData {
-  input: number
-  output: number
-  cache_read?: number
-  cache_write?: number
-}
+const LOCAL_CLI = join(PROJECT_ROOT, "node_modules", "command-code", "dist", "index.mjs")
+const GLOBAL_CLI = join(homedir(), ".bun", "install", "global", "node_modules", "command-code", "dist", "index.mjs")
 
 interface ModelEntry {
   id: string
@@ -21,151 +14,220 @@ interface ModelEntry {
   tier: "premium" | "open-source"
   reasoning: boolean
   tool_call: boolean
-  cost: CostData
+  cost: { input: number; output: number; cache_read?: number; cache_write?: number }
   limit: { context: number; output: number }
 }
 
-const CONTEXT_WINDOWS: Record<string, { context: number; output: number }> = {
-  "claude-opus-4-7": { context: 200000, output: 32000 },
+interface CostEntry {
+  id: string
+  provider: string
+  category: string
+  promptCost: number
+  completionCost: number
+  cacheWrite5mCost: number
+  cacheWrite1hCost: number
+  cacheHitCost: number
+}
+
+interface SnEntry {
+  id: string
+  provider: string
+  spec: string
+  label: string
+  name: string
+  description: string
+  reasoning?: boolean
+  reasoningEfforts?: string[]
+  contextWindow?: number
+}
+
+const FALLBACK_COSTS: Record<string, { input: number; output: number; cache_read?: number; cache_write?: number }> = {
+  "deepseek/deepseek-v4-pro": { input: 0.435, output: 0.87, cache_read: 0.003625 },
+  "deepseek/deepseek-v4-flash": { input: 0.14, output: 0.28, cache_read: 0.01 },
+  "zai-org/GLM-5.1": { input: 1.4, output: 4.4, cache_read: 0.26 },
+  "MiniMaxAI/MiniMax-M2.7": { input: 0.3, output: 1.2, cache_read: 0.06 },
+  "Qwen/Qwen3.6-Max-Preview": { input: 1.3, output: 7.8, cache_read: 0.26, cache_write: 1.63 },
+  "Qwen/Qwen3.6-Plus": { input: 0.5, output: 3, cache_read: 0.1 },
+  "Qwen/Qwen3.7-Max": { input: 1.25, output: 3.75, cache_read: 0.25, cache_write: 1.56 },
+  "stepfun/Step-3.5-Flash": { input: 0.1, output: 0.3, cache_read: 0.02 },
+  "google/gemini-3.5-flash": { input: 1.5, output: 9, cache_read: 0.15 },
+  "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cache_read: 0.03 },
+}
+
+const FALLBACK_LIMITS: Record<string, { context: number; output: number }> = {
+  "claude-haiku-4-5-20251001": { context: 200000, output: 8192 },
   "claude-opus-4-6": { context: 200000, output: 32000 },
+  "claude-opus-4-7": { context: 200000, output: 32000 },
   "claude-sonnet-4-6": { context: 200000, output: 16000 },
-  "claude-haiku-4-5": { context: 200000, output: 8192 },
   "gpt-5.5": { context: 256000, output: 128000 },
   "gpt-5.4": { context: 256000, output: 128000 },
   "gpt-5.3-codex": { context: 256000, output: 128000 },
   "gpt-5.4-mini": { context: 256000, output: 128000 },
-  "google/gemini-3.5-flash": { context: 1000000, output: 65536 },
-  "google/gemini-3.1-flash-lite": { context: 1000000, output: 65536 },
   "moonshotai/Kimi-K2.6": { context: 262144, output: 131072 },
   "moonshotai/Kimi-K2.5": { context: 262144, output: 131072 },
-  "zai-org/GLM-5.1": { context: 200000, output: 131072 },
   "zai-org/GLM-5": { context: 200000, output: 131072 },
-  "MiniMaxAI/MiniMax-M2.7": { context: 1000000, output: 131072 },
+  "zai-org/GLM-5.1": { context: 200000, output: 131072 },
   "MiniMaxAI/MiniMax-M2.5": { context: 1000000, output: 131072 },
+  "MiniMaxAI/MiniMax-M2.7": { context: 1000000, output: 131072 },
   "deepseek/deepseek-v4-pro": { context: 1000000, output: 384000 },
   "deepseek/deepseek-v4-flash": { context: 1000000, output: 384000 },
   "Qwen/Qwen3.6-Max-Preview": { context: 1000000, output: 131072 },
   "Qwen/Qwen3.6-Plus": { context: 1000000, output: 131072 },
   "Qwen/Qwen3.7-Max": { context: 1000000, output: 131072 },
   "stepfun/Step-3.5-Flash": { context: 1000000, output: 131072 },
+  "google/gemini-3.5-flash": { context: 1000000, output: 65536 },
+  "google/gemini-3.1-flash-lite": { context: 1000000, output: 65536 },
 }
 
-const DEFAULT_LIMIT = { context: 200000, output: 65536 }
+const HARDCODED_EXTRAS: SnEntry[] = [
+  {
+    id: "google/gemini-3.5-flash",
+    provider: "anthropic",
+    spec: "chatComplete",
+    label: "Gemini 3.5 Flash",
+    name: "Gemini 3.5 Flash",
+    description: "fast multimodal reasoning",
+    reasoning: true,
+  },
+  {
+    id: "google/gemini-3.1-flash-lite",
+    provider: "anthropic",
+    spec: "chatComplete",
+    label: "Gemini 3.1 Flash Lite",
+    name: "Gemini 3.1 Flash Lite",
+    description: "lightweight cost-effective flash",
+  },
+  {
+    id: "Qwen/Qwen3.7-Max",
+    provider: "vercel-ai-gateway",
+    spec: "chatComplete",
+    label: "Qwen 3.7 Max",
+    name: "Qwen 3.7 Max",
+    description: "latest Qwen Max model",
+    reasoning: true,
+  },
+]
 
-const NO_REASONING = new Set([
-  "gpt-5.4-mini",
-  "google/gemini-3.1-flash-lite",
-])
-
-const DEPRECATED = new Set(["Claude Sonnet 4.5"])
-
-function parsePrice(raw: string): number | undefined {
-  const cleaned = raw.replace(/[$,\s]/g, "")
-  if (!cleaned || cleaned === "-") return undefined
-  const n = parseFloat(cleaned)
-  return isNaN(n) ? undefined : n
+const TIER_MAP: Record<string, "premium" | "open-source"> = {
+  "anthropic": "premium",
+  "openai": "premium",
+  "baseten": "open-source",
+  "vercel-ai-gateway": "open-source",
+  "openrouter": "open-source",
+  "cloudflare-ai-gateway": "open-source",
 }
 
-function extractCellPrice(cellHtml: string): number | undefined {
-  const strongMatch = cellHtml.match(/<strong>\$?([0-9.]+)<\/strong>/)
-  if (strongMatch) return parsePrice(strongMatch[1])
-  const plainMatch = cellHtml.match(/>\$?([0-9.]+)</)
-  if (plainMatch) return parsePrice(plainMatch[1])
-  const bareMatch = cellHtml.match(/\$([0-9.]+)/)
-  if (bareMatch) return parsePrice(bareMatch[1])
-  return undefined
-}
-
-function extractCellText(cellHtml: string): string {
-  return cellHtml
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .trim()
-}
-
-async function fetchModelsPage(): Promise<Map<string, string>> {
-  const resp = await fetch(MODELS_URL)
-  if (!resp.ok) throw new Error(`Models page returned ${resp.status}`)
-  const html = await resp.text()
-
-  const models = new Map<string, string>()
-  const rowRegex = /<tr>([\s\S]*?)<\/tr>/g
-  let match: RegExpExecArray | null
-
-  while ((match = rowRegex.exec(html)) !== null) {
-    const row = match[1]
-    const codeMatch = row.match(/<code>([^<]+)<\/code>/)
-    if (!codeMatch) continue
-    const id = codeMatch[1]
-    if (id === "taste-1") continue
-
-    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
-    if (cells.length < 2) continue
-
-    const name = extractCellText(cells[1][1])
-    if (!name) continue
-
-    models.set(id, name)
+function findCliBundle(): string {
+  for (const p of [LOCAL_CLI, GLOBAL_CLI]) {
+    if (existsSync(p)) return p
   }
-
-  return models
+  throw new Error(
+    "command-code CLI not found. Install it:\n  bun add -d command-code"
+  )
 }
 
-async function fetchPricingPage(): Promise<{ premium: Map<string, CostData>; openSource: Map<string, CostData> }> {
-  const resp = await fetch(PRICING_URL)
-  if (!resp.ok) throw new Error(`Pricing page returned ${resp.status}`)
-  const html = await resp.text()
+function evaluateLiteral(code: string): any {
+  const prepared = code
+    .replace(/!0/g, "true")
+    .replace(/!1/g, "false")
+    .replace(/(\d+)e(\d+)/g, (_, m: string, e: string) =>
+      String(Number(m) * Math.pow(10, Number(e)))
+    )
+    .replace(/Wt\.ANTHROPIC/g, '"anthropic"')
+    .replace(/Wt\.OPENAI/g, '"openai"')
+    .replace(/Wt\.BASETEN/g, '"baseten"')
+    .replace(/Wt\.VERCEL_AI_GATEWAY/g, '"vercel-ai-gateway"')
+    .replace(/Wt\.OPENROUTER/g, '"openrouter"')
+    .replace(/Wt\.CLOUDFLARE_AI_GATEWAY/g, '"cloudflare-ai-gateway"')
+    .replace(/Wt\.GITHUB_COPILOT/g, '"github-copilot"')
+    .replace(/\brn\b/g, '"chatComplete"')
+    .replace(/\bon\b/g, '"responses"')
+    .replace(/\bQt\b/g, '"vercel-ai-gateway"')
+  return Function(`"use strict"; return (${prepared})`)()
+}
 
-  const premium = new Map<string, CostData>()
-  const openSource = new Map<string, CostData>()
-
-  const tables = [...html.matchAll(/<table[^>]*>([\s\S]*?)<\/table>/g)]
-
-  for (const tableMatch of tables) {
-    const tableHtml = tableMatch[1]
-    const headerMatch = tableHtml.match(/<thead[^>]*>([\s\S]*?)<\/thead>/)
-    if (!headerMatch) continue
-    const header = headerMatch[1]
-    const hasInputOutput = header.includes("Input") && header.includes("Output")
-    if (!hasInputOutput) continue
-
-    const bodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/)
-    if (!bodyMatch) continue
-    const body = bodyMatch[1]
-
-    const rows = [...body.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)]
-    for (const rowMatch of rows) {
-      const row = rowMatch[1]
-      const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
-      if (cells.length < 4) continue
-
-      const name = extractCellText(cells[0][1])
-      if (!name || DEPRECATED.has(name)) continue
-
-      const input = extractCellPrice(cells[1][1])
-      const output = extractCellPrice(cells[2][1])
-      const cacheRead = extractCellPrice(cells[3][1])
-      const cacheWrite = cells.length > 4 ? extractCellPrice(cells[4][1]) : undefined
-
-      if (input === undefined || output === undefined) continue
-
-      const cost: CostData = { input, output }
-      if (cacheRead !== undefined) cost.cache_read = cacheRead
-      if (cacheWrite !== undefined) cost.cache_write = cacheWrite
-
-      const isPremium = premium.size < 20 && !openSource.has(name)
-      if (name.includes("DeepSeek") || name.includes("Kimi") || name.includes("GLM") ||
-          name.includes("MiniMax") || name.includes("Qwen") || name.includes("Step")) {
-        openSource.set(name, cost)
-      } else {
-        premium.set(name, cost)
-      }
+function extractSn(source: string): Record<string, SnEntry> {
+  const idx = source.indexOf("sn={")
+  if (idx < 0) throw new Error("Could not find sn={ in CLI bundle")
+  let depth = 0
+  let end = idx + 3
+  for (; end < source.length; end++) {
+    const ch = source[end]
+    if (ch === "{") depth++
+    else if (ch === "}") {
+      depth--
+      if (depth === 0) break
     }
   }
+  const raw = source.slice(idx + 3, end + 1)
+  const entries = evaluateLiteral(raw) as Record<string, SnEntry>
+  return entries
+}
 
-  return { premium, openSource }
+function extractKt(source: string): Record<string, CostEntry[]> {
+  const idx = source.indexOf("Kt={")
+  if (idx < 0) throw new Error("Could not find Kt={ in CLI bundle")
+  let depth = 0
+  let end = idx + 3
+  for (; end < source.length; end++) {
+    const ch = source[end]
+    if (ch === "{") depth++
+    else if (ch === "}") {
+      depth--
+      if (depth === 0) break
+    }
+  }
+  const raw = source.slice(idx + 3, end + 1)
+  return evaluateLiteral(raw) as Record<string, CostEntry[]>
+}
+
+function buildCostMap(costs: Record<string, CostEntry[]>): Map<string, CostEntry> {
+  const map = new Map<string, CostEntry>()
+  for (const arr of Object.values(costs)) {
+    for (const entry of arr) {
+      const colonIdx = entry.id.indexOf(":")
+      const bareId = colonIdx >= 0 ? entry.id.slice(colonIdx + 1) : entry.id
+      map.set(bareId, entry)
+    }
+  }
+  return map
+}
+
+function buildModelEntry(
+  entry: SnEntry,
+  costMap: Map<string, CostEntry>,
+): ModelEntry | null {
+  const provider = entry.provider || "unknown"
+  const tier = TIER_MAP[provider] ?? "open-source"
+
+  const costEntry = costMap.get(entry.id)
+  let cost: { input: number; output: number; cache_read?: number; cache_write?: number }
+  if (costEntry) {
+    cost = {
+      input: costEntry.promptCost,
+      output: costEntry.completionCost,
+    }
+    if (costEntry.cacheHitCost > 0) cost.cache_read = costEntry.cacheHitCost
+    if (costEntry.cacheWrite5mCost > 0) cost.cache_write = costEntry.cacheWrite5mCost
+  } else {
+    const fallback = FALLBACK_COSTS[entry.id]
+    if (!fallback) return null
+    cost = fallback
+  }
+
+  const limit = entry.contextWindow
+    ? { context: entry.contextWindow, output: FALLBACK_LIMITS[entry.id]?.output ?? 65536 }
+    : FALLBACK_LIMITS[entry.id] ?? { context: 200000, output: 65536 }
+
+  return {
+    id: entry.id,
+    name: entry.name,
+    tier,
+    reasoning: entry.reasoning || (entry.reasoningEfforts?.length ?? 0) > 0,
+    tool_call: true,
+    cost,
+    limit,
+  }
 }
 
 function toConfigKey(id: string): string {
@@ -174,45 +236,11 @@ function toConfigKey(id: string): string {
   return short.toLowerCase()
 }
 
-function buildModelEntries(
-  models: Map<string, string>,
-  premiumPricing: Map<string, CostData>,
-  openSourcePricing: Map<string, CostData>,
-): ModelEntry[] {
-  const entries: ModelEntry[] = []
-
-  for (const [id, name] of models) {
-    let cost = premiumPricing.get(name) ?? openSourcePricing.get(name)
-    if (!cost) {
-      console.warn(`  Skipping ${id} (${name}): no pricing found`)
-      continue
-    }
-
-    const isOSS = openSourcePricing.has(name)
-    const limit = CONTEXT_WINDOWS[id] ?? DEFAULT_LIMIT
-
-    entries.push({
-      id,
-      name,
-      tier: isOSS ? "open-source" : "premium",
-      reasoning: !NO_REASONING.has(id),
-      tool_call: true,
-      cost,
-      limit,
-    })
-  }
-
-  return entries
-}
-
 function generateOpencodeModels(entries: ModelEntry[]): Record<string, unknown> {
   const models: Record<string, unknown> = {}
   for (const entry of entries) {
     const key = toConfigKey(entry.id)
-    const costObj: Record<string, number> = {
-      input: entry.cost.input,
-      output: entry.cost.output,
-    }
+    const costObj: Record<string, number> = { input: entry.cost.input, output: entry.cost.output }
     if (entry.cost.cache_read !== undefined) costObj.cache_read = entry.cost.cache_read
     if (entry.cost.cache_write !== undefined) costObj.cache_write = entry.cost.cache_write
 
@@ -288,28 +316,48 @@ function updateGlobalConfig(modelsObj: Record<string, unknown>) {
   console.log(`  Updated ${GLOBAL_CONFIG}`)
 }
 
-async function main() {
+function main() {
   const args = process.argv.slice(2)
   const shouldUpdateGlobal = args.includes("--update-global")
 
-  console.log("Fetching models page...")
-  const models = await fetchModelsPage()
-  console.log(`  Found ${models.size} models`)
+  const cliPath = findCliBundle()
+  console.log(`Reading CLI bundle: ${cliPath}`)
+  const source = readFileSync(cliPath, "utf-8")
 
-  console.log("Fetching pricing page...")
-  const { premium, openSource } = await fetchPricingPage()
-  console.log(`  Found ${premium.size} premium + ${openSource.size} open-source pricing entries`)
+  console.log("Extracting model catalog (sn)...")
+  const sn = extractSn(source)
+  console.log(`  Found ${Object.keys(sn).length} models in CLI`)
 
-  console.log("Building model entries...")
-  const entries = buildModelEntries(models, premium, openSource)
-  console.log(`  Generated ${entries.length} model entries`)
+  console.log("Extracting cost data (Kt)...")
+  const kt = extractKt(source)
+  const costMap = buildCostMap(kt)
+  console.log(`  Found ${costMap.size} cost entries`)
+
+  const entries: ModelEntry[] = []
+
+  for (const [, model] of Object.entries(sn)) {
+    const entry = buildModelEntry(model, costMap)
+    if (entry) {
+      entries.push(entry)
+    } else {
+      console.warn(`  Skipping ${model.id}: no cost data`)
+    }
+  }
+
+  for (const extra of HARDCODED_EXTRAS) {
+    const entry = buildModelEntry(extra, costMap)
+    if (entry) {
+      console.log(`  Adding hardcoded extra: ${extra.id}`)
+      entries.push(entry)
+    }
+  }
 
   entries.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier === "premium" ? -1 : 1
     return a.name.localeCompare(b.name)
   })
 
-  console.log(`Writing ${MODELS_JSON}...`)
+  console.log(`\nWriting ${MODELS_JSON} with ${entries.length} models...`)
   writeFileSync(MODELS_JSON, JSON.stringify(entries, null, 2) + "\n", "utf-8")
 
   const modelsObj = generateOpencodeModels(entries)
@@ -332,7 +380,4 @@ async function main() {
   console.log("\nDone.")
 }
 
-main().catch((err) => {
-  console.error("Sync failed:", err)
-  process.exit(1)
-})
+main()
