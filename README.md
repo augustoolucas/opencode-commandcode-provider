@@ -4,21 +4,15 @@
 
 ## Quick Start
 
-### 1. Get an API key
-
-Sign up at [commandcode.ai](https://commandcode.ai) and generate an API key.
-
-### 2. Install
-
-Add the provider to your `opencode.json`:
+### 1. Install
 
 ```bash
 opencode plugin commandcode-go-opencode-provider
 ```
 
-Or add it manually (see [Manual Configuration](#manual-configuration)).
+This installs the provider and registers all available models automatically.
 
-### 3. Connect
+### 2. Connect
 
 Run `/connect` in opencode, search for **Command Code**, and enter your API key:
 
@@ -26,7 +20,7 @@ Run `/connect` in opencode, search for **Command Code**, and enter your API key:
 /connect
 ```
 
-### 4. Select a model
+### 3. Select a model
 
 Run `/models` to pick from available models:
 
@@ -36,11 +30,10 @@ Run `/models` to pick from available models:
 
 ## Manual Configuration
 
-You can also configure the provider directly in `opencode.json`:
+If you prefer to configure manually, add this to your `opencode.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "plugin": ["commandcode-go-opencode-provider/server"],
   "provider": {
     "commandcode": {
@@ -53,7 +46,7 @@ You can also configure the provider directly in `opencode.json`:
 }
 ```
 
-The plugin enables the `/connect` auth flow. The provider key (`commandcode`) is used to prefix model IDs (e.g. `commandcode/deepseek-v4-flash`).
+The plugin auto-registers models from [`models.json`](./models.json) at startup. You only need the `provider.commandcode` block — no need to list individual models.
 
 ### Environment Variable
 
@@ -103,7 +96,7 @@ For local testing, create `opencode.local.json` (gitignored) with `file://` path
 
 ```json
 {
-  "plugin": ["file:///path/to/commandcode-go-opencode-provider/plugin.ts"],
+  "plugin": ["file:///path/to/commandcode-go-opencode-provider/server"],
   "provider": {
     "commandcode": {
       "npm": "file:///path/to/commandcode-go-opencode-provider",

@@ -1,18 +1,19 @@
 import { expect, test, beforeAll } from "bun:test"
 
-type PluginModule = {
-  default: () => Promise<{
-    auth: {
-      provider: string
-      methods: Array<{
-        type: string
-        label: string
-        authorize: (inputs: Record<string, unknown> | undefined) => Promise<{ type: string; key?: string }>
-      }>
-      loader: (getAuth: () => Promise<{ type: string; key?: string } | null>) => Promise<Record<string, unknown>>
-    }
-  }>
+type PluginResult = {
+  config: (config: Record<string, unknown>) => Promise<void>
+  auth: {
+    provider: string
+    methods: Array<{
+      type: string
+      label: string
+      authorize: (inputs: Record<string, unknown> | undefined) => Promise<{ type: string; key?: string }>
+    }>
+    loader: (getAuth: () => Promise<{ type: string; key?: string } | null>) => Promise<Record<string, unknown>>
+  }
 }
+
+type PluginModule = { default: () => Promise<PluginResult> }
 
 let pluginFn: PluginModule["default"]
 
@@ -30,7 +31,7 @@ test("authorize returns success with valid key", async () => {
   const plugin = await pluginFn()
   const result = await plugin.auth.methods[0].authorize({ key: "sk-valid-key" })
   expect(result.type).toBe("success")
-  expect((result as any).key).toBe("sk-valid-key")
+  expect((result as Record<string, unknown>).key).toBe("sk-valid-key")
 })
 
 test("authorize returns failed with empty key", async () => {
@@ -77,7 +78,7 @@ test("loader returns empty object on wrong auth type", async () => {
   const result = await plugin.auth.loader(async () => ({
     type: "oauth",
     key: "some-token",
-  } as any))
+  } as Record<string, unknown>))
   expect(result).toEqual({})
 })
 
@@ -87,4 +88,54 @@ test("loader returns empty object when getAuth throws", async () => {
     throw new Error("auth failed")
   })
   expect(result).toEqual({})
+})
+
+test("config hook registers provider with npm and models", async () => {
+  const plugin = await pluginFn()
+  const config: Record<string, unknown> = {
+    provider: { commandcode: {} },
+  }
+  await plugin.config(config)
+
+  const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+  expect(cc.npm).toBe("commandcode-go-opencode-provider")
+  expect(cc.name).toBe("Command Code")
+  expect(cc.env).toEqual(["COMMANDCODE_API_KEY"])
+  expect(cc.models).toBeDefined()
+  const models = cc.models as Record<string, unknown>
+  expect(Object.keys(models).length).toBeGreaterThan(0)
+})
+
+test("config hook does not overwrite existing npm field", async () => {
+  const plugin = await pluginFn()
+  const config: Record<string, unknown> = {
+    provider: { commandcode: { npm: "custom-package" } },
+  }
+  await plugin.config(config)
+
+  const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+  expect(cc.npm).toBe("custom-package")
+})
+
+test("config hook does not overwrite existing models", async () => {
+  const plugin = await pluginFn()
+  const config: Record<string, unknown> = {
+    provider: { commandcode: { models: { "my-model": { id: "my-model" } } } },
+  }
+  await plugin.config(config)
+
+  const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+  const models = cc.models as Record<string, unknown>
+  expect(Object.keys(models)).toEqual(["my-model"])
+})
+
+test("config hook creates provider block if missing", async () => {
+  const plugin = await pluginFn()
+  const config: Record<string, unknown> = {}
+  await plugin.config(config)
+
+  expect(config.provider).toBeDefined()
+  const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+  expect(cc).toBeDefined()
+  expect(cc.npm).toBe("commandcode-go-opencode-provider")
 })
