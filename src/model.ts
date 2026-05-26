@@ -10,10 +10,9 @@ import type {
 import { buildRequest } from "./convert.js"
 import { parseStreamEvents } from "./stream.js"
 
-import pkg from "../package.json" with { type: "json" }
-
 const DEFAULT_BASE_URL = "https://api.commandcode.ai"
-const CC_VERSION = pkg.version
+// x-command-code-version must match the Command Code CLI version for API compatibility
+const CC_VERSION = "0.26.20"
 
 export interface CommandCodeModelOptions {
   apiKey: string

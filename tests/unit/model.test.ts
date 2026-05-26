@@ -1,7 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test"
 import { CommandCodeLanguageModel } from "../../src/model.js"
 import { mockFetchTrack, mockFetchError, mockFetchStream, makeCallOptions } from "../helpers/mocks.js"
-import pkg from "../../package.json" with { type: "json" }
 
 const MODEL_ID = "test-model"
 const API_KEY = "sk-test-key"
@@ -51,7 +50,7 @@ test("doStream sends correct headers", async () => {
   const headers = calls[0].options.headers as Record<string, string>
   expect(headers["Authorization"]).toBe("Bearer sk-test-key")
   expect(headers["Content-Type"]).toBe("application/json")
-  expect(headers["x-command-code-version"]).toBe(pkg.version)
+  expect(headers["x-command-code-version"]).toBe("0.26.20")
   expect(headers["x-cli-environment"]).toBe("production")
   expect(headers["x-project-slug"]).toBe("opencode")
 })
