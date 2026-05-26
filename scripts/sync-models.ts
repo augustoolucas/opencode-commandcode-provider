@@ -1,12 +1,13 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs"
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "fs"
 import { join } from "path"
 import { homedir } from "os"
+import { execSync } from "child_process"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const MODELS_JSON = join(PROJECT_ROOT, "models.json")
 const GLOBAL_CONFIG = join(homedir(), ".config", "opencode", "opencode.jsonc")
-const LOCAL_CLI = join(PROJECT_ROOT, "node_modules", "command-code", "dist", "index.mjs")
-const GLOBAL_CLI = join(homedir(), ".bun", "install", "global", "node_modules", "command-code", "dist", "index.mjs")
+const NPM_PACKAGE = "command-code"
+const TMP_DIR = join("/tmp", "cc-model-sync")
 
 interface ModelEntry {
   id: string
@@ -81,23 +82,6 @@ const FALLBACK_LIMITS: Record<string, { context: number; output: number }> = {
 
 const HARDCODED_EXTRAS: SnEntry[] = [
   {
-    id: "google/gemini-3.5-flash",
-    provider: "anthropic",
-    spec: "chatComplete",
-    label: "Gemini 3.5 Flash",
-    name: "Gemini 3.5 Flash",
-    description: "fast multimodal reasoning",
-    reasoning: true,
-  },
-  {
-    id: "google/gemini-3.1-flash-lite",
-    provider: "anthropic",
-    spec: "chatComplete",
-    label: "Gemini 3.1 Flash Lite",
-    name: "Gemini 3.1 Flash Lite",
-    description: "lightweight cost-effective flash",
-  },
-  {
     id: "Qwen/Qwen3.7-Max",
     provider: "vercel-ai-gateway",
     spec: "chatComplete",
@@ -117,68 +101,155 @@ const TIER_MAP: Record<string, "premium" | "open-source"> = {
   "cloudflare-ai-gateway": "open-source",
 }
 
-function findCliBundle(): string {
-  for (const p of [LOCAL_CLI, GLOBAL_CLI]) {
-    if (existsSync(p)) return p
-  }
-  throw new Error(
-    "command-code CLI not found. Install it:\n  bun add -d command-code"
-  )
+async function fetchLatestBundle(): Promise<{ source: string; version: string }> {
+  console.log(`Fetching latest ${NPM_PACKAGE} metadata...`)
+  const metaResp = await fetch(`https://registry.npmjs.org/${NPM_PACKAGE}/latest`)
+  if (!metaResp.ok) throw new Error(`npm registry returned ${metaResp.status}`)
+  const meta = await metaResp.json()
+  const version = meta.version as string
+  const tarball = meta.dist.tarball as string
+  console.log(`  Latest version: ${version}`)
+  console.log(`  Tarball: ${tarball}`)
+
+  mkdirSync(TMP_DIR, { recursive: true })
+  const tgzPath = join(TMP_DIR, `${NPM_PACKAGE}.tgz`)
+
+  console.log("Downloading tarball...")
+  const tarballResp = await fetch(tarball)
+  if (!tarballResp.ok) throw new Error(`tarball download returned ${tarballResp.status}`)
+  const buffer = Buffer.from(await tarballResp.arrayBuffer())
+  writeFileSync(tgzPath, buffer)
+
+  console.log("Extracting...")
+  execSync(`tar -xzf "${tgzPath}" -C "${TMP_DIR}"`, { stdio: "pipe" })
+
+  const bundlePath = join(TMP_DIR, "package", "dist", "index.mjs")
+  if (!existsSync(bundlePath)) throw new Error(`Bundle not found at ${bundlePath}`)
+
+  const source = readFileSync(bundlePath, "utf-8")
+
+  rmSync(TMP_DIR, { recursive: true, force: true })
+
+  return { source, version }
 }
 
-function evaluateLiteral(code: string): any {
-  const prepared = code
+function findBalancedObject(source: string, anchor: string): string {
+  const anchorIdx = source.indexOf(anchor)
+  if (anchorIdx < 0) throw new Error(`Anchor not found: ${anchor}`)
+
+  let parenIdx = anchorIdx - 1
+  while (parenIdx >= 0 && source[parenIdx] !== "(") parenIdx--
+  if (parenIdx < 0) throw new Error(`Could not find opening ( before anchor: ${anchor}`)
+
+  const braceStart = source.indexOf("{", parenIdx)
+  if (braceStart < 0) throw new Error(`Could not find { after opening (`)
+
+  let depth = 0
+  let end = braceStart
+  for (; end < source.length; end++) {
+    if (source[end] === "{") depth++
+    else if (source[end] === "}") {
+      depth--
+      if (depth === 0) break
+    }
+  }
+
+  return source.slice(braceStart, end + 1)
+}
+
+function evaluateWithContext(code: string, context: Record<string, unknown>): any {
+  const keys = Object.keys(context)
+  const values = keys.map((k) => context[k])
+  const fn = Function(...keys, `"use strict"; return (${code})`)
+  return fn(...values)
+}
+
+function extractWt(source: string): Record<string, string> {
+  const raw = findBalancedObject(source, 'ANTHROPIC:"anthropic"')
+  return evaluateWithContext(normalizeForEval(raw), {})
+}
+
+function extractSpecConstants(source: string): { chatComplete: string; responses: string; qt: string } {
+  const anchorIdx = source.indexOf('SONNET_4_6:{id:"claude-sonnet-4-6"')
+  if (anchorIdx < 0) throw new Error("Could not find model catalog anchor")
+
+  const before = source.slice(Math.max(0, anchorIdx - 5000), anchorIdx)
+
+  const chatMatch = before.match(/([A-Za-z_$]+)="chatComplete"/)
+  const respMatch = before.match(/([A-Za-z_$]+)="responses"/)
+  if (!chatMatch || !respMatch) throw new Error("Could not find spec constants")
+
+  const qtMatch = before.match(/([A-Za-z_$]+)=Vt\[0\]/)
+  const qtVar = qtMatch ? qtMatch[1] : null
+
+  return {
+    chatComplete: chatMatch[1],
+    responses: respMatch[1],
+    qt: qtVar || "",
+  }
+}
+
+function extractModelCatalog(
+  source: string,
+  wt: Record<string, string>,
+  wtName: string,
+  spec: ReturnType<typeof extractSpecConstants>,
+): Record<string, SnEntry> {
+  const raw = findBalancedObject(source, 'SONNET_4_6:{id:"claude-sonnet-4-6"')
+  const ctx: Record<string, unknown> = { [wtName]: wt }
+  ctx[spec.chatComplete] = "chatComplete"
+  ctx[spec.responses] = "responses"
+  if (spec.qt) ctx[spec.qt] = wt.VERCEL_AI_GATEWAY
+  return evaluateWithContext(normalizeForEval(raw), ctx)
+}
+
+function extractCostData(source: string, wt: Record<string, string>, wtName: string): Record<string, CostEntry[]> {
+  const anchor = '{id:"anthropic:claude-sonnet-4-'
+  const anchorIdx = source.indexOf(anchor)
+  if (anchorIdx < 0) throw new Error("Could not find cost data anchor")
+
+  let braceDepth = 0
+  let start = anchorIdx - 1
+  for (; start >= 0; start--) {
+    if (source[start] === "}") braceDepth++
+    else if (source[start] === "{") {
+      if (braceDepth === 0) break
+      braceDepth--
+    }
+  }
+
+  let depth = 0
+  let end = start
+  for (; end < source.length; end++) {
+    if (source[end] === "{") depth++
+    else if (source[end] === "}") {
+      depth--
+      if (depth === 0) break
+    }
+  }
+
+  const raw = source.slice(start, end + 1)
+  return evaluateWithContext(normalizeForEval(raw), { [wtName]: wt }) as Record<string, CostEntry[]>
+}
+
+function getWtVarName(source: string): string {
+  const idx = source.indexOf('ANTHROPIC:"anthropic"')
+  if (idx < 0) throw new Error("Could not find Wt enum")
+  const before = source.slice(Math.max(0, idx - 50), idx)
+  const match = before.match(/\(([A-Za-z_$]+)=\{$/)
+  if (match) return match[1]
+  const match2 = before.match(/([A-Za-z_$]+)=\{$/)
+  if (match2) return match2[1]
+  throw new Error("Could not determine Wt variable name")
+}
+
+function normalizeForEval(code: string): string {
+  return code
     .replace(/!0/g, "true")
     .replace(/!1/g, "false")
-    .replace(/(\d+)e(\d+)/g, (_, m: string, e: string) =>
+    .replace(/(\d+)e(\d+)/g, (_: string, m: string, e: string) =>
       String(Number(m) * Math.pow(10, Number(e)))
     )
-    .replace(/Wt\.ANTHROPIC/g, '"anthropic"')
-    .replace(/Wt\.OPENAI/g, '"openai"')
-    .replace(/Wt\.BASETEN/g, '"baseten"')
-    .replace(/Wt\.VERCEL_AI_GATEWAY/g, '"vercel-ai-gateway"')
-    .replace(/Wt\.OPENROUTER/g, '"openrouter"')
-    .replace(/Wt\.CLOUDFLARE_AI_GATEWAY/g, '"cloudflare-ai-gateway"')
-    .replace(/Wt\.GITHUB_COPILOT/g, '"github-copilot"')
-    .replace(/\brn\b/g, '"chatComplete"')
-    .replace(/\bon\b/g, '"responses"')
-    .replace(/\bQt\b/g, '"vercel-ai-gateway"')
-  return Function(`"use strict"; return (${prepared})`)()
-}
-
-function extractSn(source: string): Record<string, SnEntry> {
-  const idx = source.indexOf("sn={")
-  if (idx < 0) throw new Error("Could not find sn={ in CLI bundle")
-  let depth = 0
-  let end = idx + 3
-  for (; end < source.length; end++) {
-    const ch = source[end]
-    if (ch === "{") depth++
-    else if (ch === "}") {
-      depth--
-      if (depth === 0) break
-    }
-  }
-  const raw = source.slice(idx + 3, end + 1)
-  const entries = evaluateLiteral(raw) as Record<string, SnEntry>
-  return entries
-}
-
-function extractKt(source: string): Record<string, CostEntry[]> {
-  const idx = source.indexOf("Kt={")
-  if (idx < 0) throw new Error("Could not find Kt={ in CLI bundle")
-  let depth = 0
-  let end = idx + 3
-  for (; end < source.length; end++) {
-    const ch = source[end]
-    if (ch === "{") depth++
-    else if (ch === "}") {
-      depth--
-      if (depth === 0) break
-    }
-  }
-  const raw = source.slice(idx + 3, end + 1)
-  return evaluateLiteral(raw) as Record<string, CostEntry[]>
 }
 
 function buildCostMap(costs: Record<string, CostEntry[]>): Map<string, CostEntry> {
@@ -316,26 +387,35 @@ function updateGlobalConfig(modelsObj: Record<string, unknown>) {
   console.log(`  Updated ${GLOBAL_CONFIG}`)
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2)
   const shouldUpdateGlobal = args.includes("--update-global")
 
-  const cliPath = findCliBundle()
-  console.log(`Reading CLI bundle: ${cliPath}`)
-  const source = readFileSync(cliPath, "utf-8")
+  const { source, version } = await fetchLatestBundle()
+  console.log(`Read CLI bundle v${version} (${(source.length / 1024).toFixed(0)} KB)`)
 
-  console.log("Extracting model catalog (sn)...")
-  const sn = extractSn(source)
-  console.log(`  Found ${Object.keys(sn).length} models in CLI`)
+  console.log("Extracting provider enum (Wt)...")
+  const wt = extractWt(source)
+  const wtName = getWtVarName(source)
+  console.log(`  Provider enum var: ${wtName}, keys: ${Object.keys(wt).join(", ")}`)
 
-  console.log("Extracting cost data (Kt)...")
-  const kt = extractKt(source)
-  const costMap = buildCostMap(kt)
+  console.log("Extracting spec constants...")
+  const spec = extractSpecConstants(source)
+  console.log(`  chatComplete=${spec.chatComplete}, responses=${spec.responses}, qt=${spec.qt || "(none)"}`)
+
+  console.log("Extracting model catalog...")
+  const models = extractModelCatalog(source, wt, wtName, spec)
+  const modelCount = Object.keys(models).length
+  console.log(`  Found ${modelCount} models`)
+
+  console.log("Extracting cost data...")
+  const costs = extractCostData(source, wt, wtName)
+  const costMap = buildCostMap(costs)
   console.log(`  Found ${costMap.size} cost entries`)
 
   const entries: ModelEntry[] = []
 
-  for (const [, model] of Object.entries(sn)) {
+  for (const [, model] of Object.entries(models)) {
     const entry = buildModelEntry(model, costMap)
     if (entry) {
       entries.push(entry)
@@ -345,10 +425,12 @@ function main() {
   }
 
   for (const extra of HARDCODED_EXTRAS) {
-    const entry = buildModelEntry(extra, costMap)
-    if (entry) {
-      console.log(`  Adding hardcoded extra: ${extra.id}`)
-      entries.push(entry)
+    if (!entries.some((e) => e.id === extra.id)) {
+      const entry = buildModelEntry(extra, costMap)
+      if (entry) {
+        console.log(`  Adding hardcoded extra: ${extra.id}`)
+        entries.push(entry)
+      }
     }
   }
 

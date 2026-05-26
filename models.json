@@ -17,23 +17,6 @@
     }
   },
   {
-    "id": "claude-opus-4-6",
-    "name": "Claude Opus 4.6",
-    "tier": "premium",
-    "reasoning": false,
-    "tool_call": true,
-    "cost": {
-      "input": 5,
-      "output": 25,
-      "cache_read": 0.5,
-      "cache_write": 6.25
-    },
-    "limit": {
-      "context": 200000,
-      "output": 32000
-    }
-  },
-  {
     "id": "claude-opus-4-7",
     "name": "Claude Opus 4.7",
     "tier": "premium",
@@ -65,38 +48,6 @@
     "limit": {
       "context": 1000000,
       "output": 16000
-    }
-  },
-  {
-    "id": "google/gemini-3.1-flash-lite",
-    "name": "Gemini 3.1 Flash Lite",
-    "tier": "premium",
-    "reasoning": false,
-    "tool_call": true,
-    "cost": {
-      "input": 0.25,
-      "output": 1.5,
-      "cache_read": 0.03
-    },
-    "limit": {
-      "context": 1000000,
-      "output": 65536
-    }
-  },
-  {
-    "id": "google/gemini-3.5-flash",
-    "name": "Gemini 3.5 Flash",
-    "tier": "premium",
-    "reasoning": true,
-    "tool_call": true,
-    "cost": {
-      "input": 1.5,
-      "output": 9,
-      "cache_read": 0.15
-    },
-    "limit": {
-      "context": 1000000,
-      "output": 65536
     }
   },
   {
@@ -193,6 +144,38 @@
     "limit": {
       "context": 1000000,
       "output": 384000
+    }
+  },
+  {
+    "id": "google/gemini-3.1-flash-lite",
+    "name": "Gemini 3.1 Flash Lite",
+    "tier": "open-source",
+    "reasoning": true,
+    "tool_call": true,
+    "cost": {
+      "input": 0.25,
+      "output": 1.5,
+      "cache_read": 0.03
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
+    }
+  },
+  {
+    "id": "google/gemini-3.5-flash",
+    "name": "Gemini 3.5 Flash",
+    "tier": "open-source",
+    "reasoning": true,
+    "tool_call": true,
+    "cost": {
+      "input": 1.5,
+      "output": 9,
+      "cache_read": 0.15
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   {
