@@ -46,7 +46,7 @@ If you prefer to configure manually, add this to your `opencode.json`:
 }
 ```
 
-The plugin auto-registers models from [`models.json`](./models.json) at startup. You only need the `provider.commandcode` block — no need to list individual models.
+The plugin auto-registers models from [`models.json`](./models.json) at startup, with specs automatically synced from the CommandCode API. You only need the `provider.commandcode` block — no need to list individual models.
 
 ### Environment Variable
 
@@ -62,11 +62,12 @@ COMMANDCODE_API_KEY=your-key opencode
 |---|---|---|---|---|
 | `claude-haiku-4-5-20251001`                | Claude Haiku 4.5            | premium      | no  | 200K   |
 | `claude-opus-4-7`                          | Claude Opus 4.7             | premium      | yes | 1M     |
+| `claude-opus-4-8`                          | Claude Opus 4.8             | premium      | yes | 1M     |
 | `claude-sonnet-4-6`                        | Claude Sonnet 4.6           | premium      | yes | 1M     |
 | `gpt-5.3-codex`                            | GPT-5.3 Codex               | premium      | yes | 400K   |
 | `gpt-5.4`                                  | GPT-5.4                     | premium      | yes | 400K   |
 | `gpt-5.4-mini`                             | GPT-5.4 Mini                | premium      | yes | 400K   |
-| `gpt-5.5`                                  | GPT-5.5                     | premium      | yes | 256K   |
+| `gpt-5.5`                                  | GPT-5.5                     | premium      | yes | 200K   |
 | `deepseek/deepseek-v4-flash`               | DeepSeek V4 Flash           | open-source  | yes | 1M     |
 | `deepseek/deepseek-v4-pro`                 | DeepSeek V4 Pro             | open-source  | yes | 1M     |
 | `google/gemini-3.1-flash-lite`             | Gemini 3.1 Flash Lite       | open-source  | yes | 1M     |
@@ -76,13 +77,18 @@ COMMANDCODE_API_KEY=your-key opencode
 | `moonshotai/Kimi-K2.5`                     | Kimi K2.5                   | open-source  | no  | 256K   |
 | `moonshotai/Kimi-K2.6`                     | Kimi K2.6                   | open-source  | no  | 256K   |
 | `MiniMaxAI/MiniMax-M2.5`                   | MiniMax M2.5                | open-source  | no  | 200K   |
-| `MiniMaxAI/MiniMax-M2.7`                   | MiniMax M2.7                | open-source  | no  | 1M     |
-| `Qwen/Qwen3.6-Max-Preview`                 | Qwen 3.6 Max Preview        | open-source  | yes | 1M     |
-| `Qwen/Qwen3.6-Plus`                        | Qwen 3.6 Plus               | open-source  | yes | 1M     |
+| `MiniMaxAI/MiniMax-M2.7`                   | MiniMax M2.7                | open-source  | no  | 200K   |
+| `MiniMaxAI/MiniMax-M3`                     | MiniMax M3                  | open-source  | no  | 1M     |
+| `Qwen/Qwen3.6-Max-Preview`                 | Qwen 3.6 Max Preview        | open-source  | yes | 200K   |
+| `Qwen/Qwen3.6-Plus`                        | Qwen 3.6 Plus               | open-source  | yes | 200K   |
 | `Qwen/Qwen3.7-Max`                         | Qwen 3.7 Max                | open-source  | yes | 1M     |
+| `Qwen/Qwen3.7-Plus`                        | Qwen 3.7 Plus               | open-source  | yes | 1M     |
 | `stepfun/Step-3.5-Flash`                   | Step 3.5 Flash              | open-source  | yes | 1M     |
+| `stepfun/Step-3.7-Flash`                   | Step 3.7 Flash              | open-source  | yes | 256K   |
+| `xiaomi/mimo-v2.5`                         | Xiaomi MiMo V2.5            | open-source  | no  | 1M     |
+| `xiaomi/mimo-v2.5-pro`                     | Xiaomi MiMo V2.5 Pro        | open-source  | no  | 1M     |
 
-Full model list is maintained in [`models.json`](./models.json). Run `bun run sync` to refresh from the latest Command Code CLI release on npm.
+Models are automatically synced from the CommandCode API at startup. Context sizes and new models are updated on each restart. The local [`models.json`](./models.json) serves as an offline fallback.
 
 ## Development
 
@@ -109,7 +115,7 @@ For local testing, create `opencode.local.json` (gitignored) with `file://` path
 
 Run `opencode --config opencode.local.json` to test with your local build.
 
-### Sync Models
+### Sync Models (Manual)
 
 ```bash
 bun run sync              # update models.json from Command Code

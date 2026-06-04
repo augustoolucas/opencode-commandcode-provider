@@ -31,7 +31,7 @@ const table = [tableHeader, separator, ...rows].join("\n")
 const readme = readFileSync(README, "utf-8")
 
 const startMarker = "## Available Models"
-const endMarker = "Full model list is maintained in"
+const endMarker = "Models are automatically synced"
 
 const startIdx = readme.indexOf(startMarker)
 const endIdx = readme.indexOf(endMarker, startIdx)

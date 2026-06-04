@@ -1,4 +1,8 @@
-import { expect, test, beforeAll } from "bun:test"
+import { expect, test, beforeAll, beforeEach, afterEach, spyOn } from "bun:test"
+import * as fs from "fs"
+import { mergeModels } from "../../plugin.ts"
+import type { ModelEntry } from "../../plugin.ts"
+import { mockFetch, mockFetchTrack } from "../helpers/mocks.ts"
 
 type PluginResult = {
   config: (config: Record<string, unknown>) => Promise<void>
@@ -138,4 +142,134 @@ test("config hook creates provider block if missing", async () => {
   const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
   expect(cc).toBeDefined()
   expect(cc.npm).toBe("commandcode-go-opencode-provider")
+})
+
+// --- mergeModels unit tests (pure, no I/O) ---
+
+const sampleModel = (overrides: Partial<ModelEntry> = {}): ModelEntry => ({
+  id: "test/model-a",
+  name: "Model A",
+  tier: "premium",
+  reasoning: false,
+  tool_call: true,
+  cost: { input: 1, output: 2 },
+  limit: { context: 100000, output: 8192 },
+  ...overrides,
+})
+
+test("mergeModels preserves local entry when API has no match", () => {
+  const local = [sampleModel()]
+  const result = mergeModels(local, [])
+  expect(result).toHaveLength(1)
+  expect(result[0].id).toBe("test/model-a")
+})
+
+test("mergeModels updates context from API for known models", () => {
+  const local = [sampleModel({ id: "test/model-a" })]
+  const result = mergeModels(local, [{ id: "test/model-a", context_length: 200000 }])
+  expect(result[0].limit.context).toBe(200000)
+  expect(result[0].limit.output).toBe(8192)
+})
+
+test("mergeModels keeps local context when API has no context_length", () => {
+  const local = [sampleModel({ id: "test/model-a", limit: { context: 150000, output: 4096 } })]
+  const result = mergeModels(local, [{ id: "test/model-a" }])
+  expect(result[0].limit.context).toBe(150000)
+})
+
+test("mergeModels adds new API-only models with defaults", () => {
+  const local = [sampleModel({ id: "test/model-a" })]
+  const result = mergeModels(local, [{ id: "new-provider/new-model", context_length: 500000 }])
+  expect(result).toHaveLength(2)
+  const newModel = result.find((m) => m.id === "new-provider/new-model")!
+  expect(newModel.name).toBe("new-model")
+  expect(newModel.tier).toBe("open-source")
+  expect(newModel.reasoning).toBe(false)
+  expect(newModel.limit.context).toBe(500000)
+  expect(newModel.limit.output).toBe(131072)
+})
+
+test("mergeModels uses default context when API model has none", () => {
+  const result = mergeModels([], [{ id: "new/model" }])
+  expect(result[0].limit.context).toBe(131072)
+  expect(result[0].limit.output).toBe(131072)
+})
+
+test("mergeModels preserves curated fields for local entries", () => {
+  const local = [sampleModel({
+    id: "test/model-a",
+    name: "Custom Name",
+    tier: "premium",
+    reasoning: true,
+    cost: { input: 5, output: 25 },
+  })]
+  const result = mergeModels(local, [{ id: "test/model-a", context_length: 999 }])
+  expect(result[0].name).toBe("Custom Name")
+  expect(result[0].tier).toBe("premium")
+  expect(result[0].reasoning).toBe(true)
+  expect(result[0].cost.input).toBe(5)
+})
+
+// --- Config hook integration tests (with writeFileSync mocked) ---
+
+let originalApiKey: string | undefined
+
+beforeEach(() => {
+  originalApiKey = process.env.COMMANDCODE_API_KEY
+})
+
+afterEach(() => {
+  if (originalApiKey === undefined) delete process.env.COMMANDCODE_API_KEY
+  else process.env.COMMANDCODE_API_KEY = originalApiKey
+})
+
+test("config hook falls back to local when API key is missing", async () => {
+  const spy = spyOn(fs, "writeFileSync").mockImplementation(() => undefined)
+  delete process.env.COMMANDCODE_API_KEY
+
+  try {
+    const plugin = await pluginFn()
+    const config: Record<string, unknown> = { provider: { commandcode: {} } }
+    await plugin.config(config)
+
+    const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+    const models = cc.models as Record<string, Record<string, unknown>>
+    expect(Object.keys(models).length).toBeGreaterThan(0)
+  } finally {
+    spy.mockRestore()
+  }
+})
+
+test("config hook does not write to disk when API response unparseable", async () => {
+  const spy = spyOn(fs, "writeFileSync").mockImplementation(() => undefined)
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const fetchSpy = mockFetch({ json: () => Promise.reject(new Error("network error")) })
+
+  try {
+    const plugin = await pluginFn()
+    const config: Record<string, unknown> = { provider: { commandcode: {} } }
+    await plugin.config(config)
+    expect(spy).not.toHaveBeenCalled()
+  } finally {
+    spy.mockRestore()
+    fetchSpy.restore()
+  }
+})
+
+test("config hook sends auth header to API", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-my-key"
+  const tracker = mockFetchTrack()
+
+  try {
+    const plugin = await pluginFn()
+    const config: Record<string, unknown> = { provider: { commandcode: {} } }
+    await plugin.config(config)
+
+    expect(tracker.calls).toHaveLength(1)
+    expect(tracker.calls[0].url).toBe("https://api.commandcode.ai/provider/v1/models")
+    const headers = tracker.calls[0].options.headers as Record<string, string>
+    expect(headers["Authorization"]).toBe("Bearer sk-my-key")
+  } finally {
+    tracker.restore()
+  }
 })

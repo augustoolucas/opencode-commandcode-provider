@@ -1,10 +1,10 @@
-import { readFileSync } from "fs"
+import { readFileSync, writeFileSync } from "fs"
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-interface ModelEntry {
+export interface ModelEntry {
   id: string
   name: string
   tier: "premium" | "open-source"
@@ -14,9 +14,87 @@ interface ModelEntry {
   limit: { context: number; output: number }
 }
 
+interface ApiModel {
+  id: string
+  context_length?: number
+}
+
 function loadModels(): ModelEntry[] {
-  const modelsPath = join(__dirname, "models.json")
-  return JSON.parse(readFileSync(modelsPath, "utf-8"))
+  try {
+    const modelsPath = join(__dirname, "models.json")
+    return JSON.parse(readFileSync(modelsPath, "utf-8"))
+  } catch {
+    return []
+  }
+}
+
+function saveModels(models: ModelEntry[]): void {
+  try {
+    const modelsPath = join(__dirname, "models.json")
+    const serialized = JSON.stringify(models, null, 2) + "\n"
+    const existing = (() => {
+      try {
+        return readFileSync(modelsPath, "utf-8")
+      } catch {
+        return null
+      }
+    })()
+    if (existing === serialized) return
+    writeFileSync(modelsPath, serialized, "utf-8")
+  } catch {
+    // silent — non-fatal
+  }
+}
+
+async function fetchModelsFromApi(): Promise<ApiModel[] | null> {
+  const apiKey = process.env.COMMANDCODE_API_KEY
+  if (!apiKey) return null
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 5000)
+  try {
+    const resp = await fetch("https://api.commandcode.ai/provider/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    })
+
+    if (!resp.ok) return null
+    const data = (await resp.json()) as { data?: ApiModel[] }
+    return data.data ?? null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export function mergeModels(local: ModelEntry[], api: ApiModel[]): ModelEntry[] {
+  const apiMap = new Map(api.map((m) => [m.id, m]))
+  const merged: ModelEntry[] = []
+
+  for (const entry of local) {
+    const apiModel = apiMap.get(entry.id)
+    if (apiModel?.context_length) {
+      merged.push({ ...entry, limit: { ...entry.limit, context: apiModel.context_length } })
+    } else {
+      merged.push(entry)
+    }
+    apiMap.delete(entry.id)
+  }
+
+  for (const [id, apiModel] of apiMap) {
+    merged.push({
+      id,
+      name: id.split("/").pop() ?? id,
+      tier: "open-source",
+      reasoning: false,
+      tool_call: true,
+      cost: { input: 0.5, output: 2 },
+      limit: { context: apiModel.context_length ?? 131072, output: 131072 },
+    })
+  }
+
+  return merged
 }
 
 function toConfigKey(id: string): string {
@@ -40,7 +118,12 @@ export default async function commandcodePlugin() {
       if (!cc.env) cc.env = ["COMMANDCODE_API_KEY"]
 
       if (!cc.models) {
-        const models = loadModels()
+        let models = loadModels()
+        const apiModels = await fetchModelsFromApi()
+        if (apiModels && apiModels.length > 0) {
+          models = mergeModels(models, apiModels)
+          saveModels(models)
+        }
         const modelsObj: Record<string, unknown> = {}
         for (const entry of models) {
           const key = toConfigKey(entry.id)
