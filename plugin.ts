@@ -1,8 +1,19 @@
-import { readFileSync, writeFileSync } from "fs"
+import { readFileSync, existsSync } from "fs"
+import { homedir } from "os"
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+function loadPluginConfig(): { disableModelSync?: boolean } {
+  const configPath = join(homedir(), ".config", "opencode", "commandcode-go-opencode-provider.json")
+  if (!existsSync(configPath)) return {}
+  try {
+    return JSON.parse(readFileSync(configPath, "utf-8"))
+  } catch {
+    return {}
+  }
+}
 
 export interface ModelEntry {
   id: string
@@ -20,33 +31,21 @@ interface ApiModel {
 }
 
 function loadModels(): ModelEntry[] {
+  const modelsPath = join(__dirname, "models.json")
   try {
-    const modelsPath = join(__dirname, "models.json")
     return JSON.parse(readFileSync(modelsPath, "utf-8"))
-  } catch {
-    return []
-  }
-}
-
-function saveModels(models: ModelEntry[]): void {
-  try {
-    const modelsPath = join(__dirname, "models.json")
-    const serialized = JSON.stringify(models, null, 2) + "\n"
-    const existing = (() => {
-      try {
-        return readFileSync(modelsPath, "utf-8")
-      } catch {
-        return null
-      }
-    })()
-    if (existing === serialized) return
-    writeFileSync(modelsPath, serialized, "utf-8")
-  } catch {
-    // silent — non-fatal
+  } catch (err) {
+    throw new Error(
+      `Bundled models.json missing or corrupt at ${modelsPath}; ` +
+        `please reinstall commandcode-go-opencode-provider.`,
+      { cause: err },
+    )
   }
 }
 
 async function fetchModelsFromApi(): Promise<ApiModel[] | null> {
+  if (loadPluginConfig().disableModelSync) return null
+
   const apiKey = process.env.COMMANDCODE_API_KEY
   if (!apiKey) return null
 
@@ -122,7 +121,6 @@ export default async function commandcodePlugin() {
         const apiModels = await fetchModelsFromApi()
         if (apiModels && apiModels.length > 0) {
           models = mergeModels(models, apiModels)
-          saveModels(models)
         }
         const modelsObj: Record<string, unknown> = {}
         for (const entry of models) {

@@ -1,8 +1,8 @@
-import { expect, test, beforeAll, beforeEach, afterEach, spyOn } from "bun:test"
-import * as fs from "fs"
+import { expect, test, beforeAll, beforeEach, afterEach } from "bun:test"
 import { mergeModels } from "../../plugin.ts"
 import type { ModelEntry } from "../../plugin.ts"
-import { mockFetch, mockFetchTrack } from "../helpers/mocks.ts"
+import { mockFetch, mockFetchTrack, withFakeConfig, withMissingModels, withCorruptModels } from "../helpers/mocks.ts"
+import bundledModels from "../../models.json" with { type: "json" }
 
 type PluginResult = {
   config: (config: Record<string, unknown>) => Promise<void>
@@ -181,7 +181,8 @@ test("mergeModels adds new API-only models with defaults", () => {
   const local = [sampleModel({ id: "test/model-a" })]
   const result = mergeModels(local, [{ id: "new-provider/new-model", context_length: 500000 }])
   expect(result).toHaveLength(2)
-  const newModel = result.find((m) => m.id === "new-provider/new-model")!
+  const newModel = result.find((m) => m.id === "new-provider/new-model")
+  if (!newModel) throw new Error("expected new model to be added")
   expect(newModel.name).toBe("new-model")
   expect(newModel.tier).toBe("open-source")
   expect(newModel.reasoning).toBe(false)
@@ -210,7 +211,7 @@ test("mergeModels preserves curated fields for local entries", () => {
   expect(result[0].cost.input).toBe(5)
 })
 
-// --- Config hook integration tests (with writeFileSync mocked) ---
+// --- Config hook integration tests ---
 
 let originalApiKey: string | undefined
 
@@ -224,36 +225,65 @@ afterEach(() => {
 })
 
 test("config hook falls back to local when API key is missing", async () => {
-  const spy = spyOn(fs, "writeFileSync").mockImplementation(() => undefined)
   delete process.env.COMMANDCODE_API_KEY
 
-  try {
-    const plugin = await pluginFn()
-    const config: Record<string, unknown> = { provider: { commandcode: {} } }
-    await plugin.config(config)
+  const plugin = await pluginFn()
+  const config: Record<string, unknown> = { provider: { commandcode: {} } }
+  await plugin.config(config)
 
-    const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
-    const models = cc.models as Record<string, Record<string, unknown>>
-    expect(Object.keys(models).length).toBeGreaterThan(0)
-  } finally {
-    spy.mockRestore()
-  }
+  const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+  const models = cc.models as Record<string, Record<string, unknown>>
+  expect(Object.keys(models).length).toBeGreaterThan(0)
 })
 
-test("config hook does not write to disk when API response unparseable", async () => {
-  const spy = spyOn(fs, "writeFileSync").mockImplementation(() => undefined)
+test("config hook uses bundled models on API error without merging", async () => {
   process.env.COMMANDCODE_API_KEY = "sk-test"
   const fetchSpy = mockFetch({ json: () => Promise.reject(new Error("network error")) })
 
-  try {
+  const plugin = await pluginFn()
+  const config: Record<string, unknown> = { provider: { commandcode: {} } }
+  await plugin.config(config)
+  fetchSpy.restore()
+
+  const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+  const models = cc.models as Record<string, Record<string, unknown>>
+  // Bundled list should pass through unchanged when the API fails —
+  // no API merge should add, drop, or overwrite entries.
+  expect(Object.keys(models).length).toBe(bundledModels.length)
+  for (const entry of bundledModels) {
+    const slashIdx = entry.id.indexOf("/")
+    const key = (slashIdx >= 0 ? entry.id.slice(slashIdx + 1) : entry.id).toLowerCase()
+    const result = models[key] as Record<string, unknown> | undefined
+    expect(result).toBeDefined()
+    expect(result?.name).toBe(entry.name)
+    expect(result?.reasoning).toBe(entry.reasoning)
+    expect(result?.tool_call).toBe(entry.tool_call)
+    expect(result?.limit).toEqual(entry.limit)
+  }
+})
+
+test("config hook throws actionable error when bundled models.json is missing", async () => {
+  delete process.env.COMMANDCODE_API_KEY
+
+  await withMissingModels(async () => {
     const plugin = await pluginFn()
     const config: Record<string, unknown> = { provider: { commandcode: {} } }
-    await plugin.config(config)
-    expect(spy).not.toHaveBeenCalled()
-  } finally {
-    spy.mockRestore()
-    fetchSpy.restore()
-  }
+    await expect(plugin.config(config)).rejects.toThrow(
+      /Bundled models.json missing or corrupt.*please reinstall commandcode-go-opencode-provider/,
+    )
+  })
+})
+
+test("config hook throws actionable error when bundled models.json is corrupt", async () => {
+  delete process.env.COMMANDCODE_API_KEY
+
+  await withCorruptModels(async () => {
+    const plugin = await pluginFn()
+    const config: Record<string, unknown> = { provider: { commandcode: {} } }
+    await expect(plugin.config(config)).rejects.toThrow(
+      /Bundled models.json missing or corrupt.*please reinstall commandcode-go-opencode-provider/,
+    )
+  })
 })
 
 test("config hook sends auth header to API", async () => {
@@ -272,4 +302,39 @@ test("config hook sends auth header to API", async () => {
   } finally {
     tracker.restore()
   }
+})
+
+// --- Opt-out via config file ---
+
+test("config hook skips API fetch when disableModelSync is true in config file", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+
+  await withFakeConfig(JSON.stringify({ disableModelSync: true }), async (tracker) => {
+    const plugin = await pluginFn()
+    const config: Record<string, unknown> = { provider: { commandcode: {} } }
+    await plugin.config(config)
+
+    expect(tracker.calls).toHaveLength(0)
+
+    const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+    const models = cc.models as Record<string, Record<string, unknown>>
+    expect(Object.keys(models).length).toBeGreaterThan(0)
+  })
+})
+
+test("config hook falls through to API on corrupt config file", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+
+  await withFakeConfig("{ invalid json", async (tracker) => {
+    const plugin = await pluginFn()
+    const config: Record<string, unknown> = { provider: { commandcode: {} } }
+    await plugin.config(config)
+
+    // Fetch is called with the correct auth header — proves the request
+    // was actually issued, not just that fetch() was attempted.
+    expect(tracker.calls).toHaveLength(1)
+    expect(tracker.calls[0].url).toBe("https://api.commandcode.ai/provider/v1/models")
+    const headers = tracker.calls[0].options.headers as Record<string, string>
+    expect(headers["Authorization"]).toBe("Bearer sk-test")
+  })
 })

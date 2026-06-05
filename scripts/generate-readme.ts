@@ -17,7 +17,12 @@ interface ModelEntry {
 
 const models: ModelEntry[] = JSON.parse(readFileSync(MODELS_JSON, "utf-8"))
 
-const rows = models.map((m) => {
+const sortedModels = [...models].sort((a, b) => {
+  if (a.tier !== b.tier) return a.tier === "premium" ? -1 : 1
+  return a.name.localeCompare(b.name)
+})
+
+const rows = sortedModels.map((m) => {
   const id = `\`${m.id}\``
   const tier = m.tier === "premium" ? "premium" : "open-source"
   const ctx = m.limit.context >= 1_000_000 ? `${(m.limit.context / 1_000_000).toFixed(0)}M` : `${(m.limit.context / 1000).toFixed(0)}K`

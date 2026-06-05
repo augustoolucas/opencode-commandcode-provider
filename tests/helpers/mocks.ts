@@ -3,6 +3,10 @@ import type {
   LanguageModelV3CallOptions,
   LanguageModelV3Message,
 } from "@ai-sdk/provider"
+import { spyOn } from "bun:test"
+import * as fs from "fs"
+import * as os from "os"
+import { join } from "path"
 
 export type MockFetchCall = {
   url: string
@@ -194,5 +198,51 @@ export function makeCallOptions(overrides: Partial<LanguageModelV3CallOptions> =
     prompt: [sampleUserMessage],
     maxOutputTokens: 1000,
     ...overrides,
+  }
+}
+
+export async function withFakeConfig<T>(
+  fileContent: string,
+  fn: (tracker: ReturnType<typeof mockFetchTrack>) => Promise<T>,
+): Promise<T> {
+  const tmpDir = fs.mkdtempSync(join(os.tmpdir(), "cc-test-"))
+  const opencodeDir = join(tmpDir, ".config", "opencode")
+  const homedirSpy = spyOn(os, "homedir").mockReturnValue(tmpDir)
+
+  try {
+    fs.mkdirSync(opencodeDir, { recursive: true })
+    fs.writeFileSync(join(opencodeDir, "commandcode-go-opencode-provider.json"), fileContent, "utf-8")
+
+    const tracker = mockFetchTrack()
+    try {
+      return await fn(tracker)
+    } finally {
+      tracker.restore()
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    homedirSpy.mockRestore()
+  }
+}
+
+export async function withMissingModels<T>(fn: () => Promise<T>): Promise<T> {
+  const readFileSpy = spyOn(fs, "readFileSync").mockImplementation(() => {
+    throw new Error("ENOENT: no such file or directory, open 'models.json'")
+  })
+  try {
+    return await fn()
+  } finally {
+    readFileSpy.mockRestore()
+  }
+}
+
+export async function withCorruptModels<T>(fn: () => Promise<T>): Promise<T> {
+  const readFileSpy = spyOn(fs, "readFileSync").mockImplementation(() => {
+    return "{ invalid json"
+  })
+  try {
+    return await fn()
+  } finally {
+    readFileSpy.mockRestore()
   }
 }
