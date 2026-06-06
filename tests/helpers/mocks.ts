@@ -225,10 +225,38 @@ export async function withFakeConfig<T>(
   }
 }
 
+export async function withLocalModels<T>(
+  models: Array<Record<string, unknown>>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const original = fs.readFileSync.bind(fs)
+  const spy = spyOn(fs, "readFileSync").mockImplementation(
+    ((...args: Parameters<typeof fs.readFileSync>) => {
+      const [path] = args
+      if (typeof path === "string" && path.endsWith("models.json")) {
+        return JSON.stringify(models)
+      }
+      return original(...args)
+    }) as typeof fs.readFileSync,
+  )
+  try {
+    return await fn()
+  } finally {
+    spy.mockRestore()
+  }
+}
+
 export async function withMissingModels<T>(fn: () => Promise<T>): Promise<T> {
-  const readFileSpy = spyOn(fs, "readFileSync").mockImplementation(() => {
-    throw new Error("ENOENT: no such file or directory, open 'models.json'")
-  })
+  const original = fs.readFileSync.bind(fs)
+  const readFileSpy = spyOn(fs, "readFileSync").mockImplementation(
+    ((...args: Parameters<typeof fs.readFileSync>) => {
+      const [path] = args
+      if (typeof path === "string" && path.endsWith("models.json")) {
+        throw new Error("ENOENT: no such file or directory, open 'models.json'")
+      }
+      return original(...args)
+    }) as typeof fs.readFileSync,
+  )
   try {
     return await fn()
   } finally {
@@ -237,9 +265,16 @@ export async function withMissingModels<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function withCorruptModels<T>(fn: () => Promise<T>): Promise<T> {
-  const readFileSpy = spyOn(fs, "readFileSync").mockImplementation(() => {
-    return "{ invalid json"
-  })
+  const original = fs.readFileSync.bind(fs)
+  const readFileSpy = spyOn(fs, "readFileSync").mockImplementation(
+    ((...args: Parameters<typeof fs.readFileSync>) => {
+      const [path] = args
+      if (typeof path === "string" && path.endsWith("models.json")) {
+        return "{ invalid json"
+      }
+      return original(...args)
+    }) as typeof fs.readFileSync,
+  )
   try {
     return await fn()
   } finally {

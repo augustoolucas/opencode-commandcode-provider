@@ -1,7 +1,5 @@
 import { expect, test, beforeAll, beforeEach, afterEach } from "bun:test"
-import { mergeModels } from "../../plugin.ts"
-import type { ModelEntry } from "../../plugin.ts"
-import { mockFetch, mockFetchTrack, withFakeConfig, withMissingModels, withCorruptModels } from "../helpers/mocks.ts"
+import { mockFetch, mockFetchTrack, withFakeConfig, withMissingModels, withCorruptModels, withLocalModels } from "../helpers/mocks.ts"
 import bundledModels from "../../models.json" with { type: "json" }
 
 type PluginResult = {
@@ -144,9 +142,9 @@ test("config hook creates provider block if missing", async () => {
   expect(cc.npm).toBe("commandcode-go-opencode-provider")
 })
 
-// --- mergeModels unit tests (pure, no I/O) ---
+// --- mergeModels integration tests (via config hook) ---
 
-const sampleModel = (overrides: Partial<ModelEntry> = {}): ModelEntry => ({
+const sampleModel = (overrides: Record<string, unknown> = {}) => ({
   id: "test/model-a",
   name: "Model A",
   tier: "premium",
@@ -157,58 +155,92 @@ const sampleModel = (overrides: Partial<ModelEntry> = {}): ModelEntry => ({
   ...overrides,
 })
 
-test("mergeModels preserves local entry when API has no match", () => {
-  const local = [sampleModel()]
-  const result = mergeModels(local, [])
-  expect(result).toHaveLength(1)
-  expect(result[0].id).toBe("test/model-a")
+async function getMergedModels(
+  localModels: Array<Record<string, unknown>>,
+  apiModels: Array<Record<string, unknown>>,
+): Promise<Record<string, Record<string, unknown>>> {
+  let result!: Record<string, Record<string, unknown>>
+  await withLocalModels(localModels, async () => {
+    const tracker = mockFetchTrack()
+    tracker.respondWith({ json: () => Promise.resolve({ data: apiModels }) })
+    try {
+      const plugin = await pluginFn()
+      const config: Record<string, unknown> = { provider: { commandcode: {} } }
+      await plugin.config(config)
+      const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+      result = cc.models as Record<string, Record<string, unknown>>
+    } finally {
+      tracker.restore()
+    }
+  })
+  return result
+}
+
+test("config hook preserves local entry when API returns empty list", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels([sampleModel()], [])
+  expect(Object.keys(models)).toHaveLength(1)
+  expect(models["model-a"]).toBeDefined()
 })
 
-test("mergeModels updates context from API for known models", () => {
-  const local = [sampleModel({ id: "test/model-a" })]
-  const result = mergeModels(local, [{ id: "test/model-a", context_length: 200000 }])
-  expect(result[0].limit.context).toBe(200000)
-  expect(result[0].limit.output).toBe(8192)
+test("config hook updates context from API for known models", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels(
+    [sampleModel()],
+    [{ id: "test/model-a", context_length: 200000 }],
+  )
+  expect(models["model-a"].limit.context).toBe(200000)
+  expect(models["model-a"].limit.output).toBe(8192)
 })
 
-test("mergeModels keeps local context when API has no context_length", () => {
-  const local = [sampleModel({ id: "test/model-a", limit: { context: 150000, output: 4096 } })]
-  const result = mergeModels(local, [{ id: "test/model-a" }])
-  expect(result[0].limit.context).toBe(150000)
+test("config hook keeps local context when API has no context_length", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels(
+    [sampleModel({ limit: { context: 150000, output: 4096 } })],
+    [{ id: "test/model-a" }],
+  )
+  expect(models["model-a"].limit.context).toBe(150000)
 })
 
-test("mergeModels adds new API-only models with defaults", () => {
-  const local = [sampleModel({ id: "test/model-a" })]
-  const result = mergeModels(local, [{ id: "new-provider/new-model", context_length: 500000 }])
-  expect(result).toHaveLength(2)
-  const newModel = result.find((m) => m.id === "new-provider/new-model")
-  if (!newModel) throw new Error("expected new model to be added")
+test("config hook adds new API-only models with defaults", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels(
+    [sampleModel()],
+    [{ id: "new-provider/new-model", context_length: 500000 }],
+  )
+  expect(Object.keys(models)).toHaveLength(2)
+  const newModel = models["new-model"]
+  expect(newModel).toBeDefined()
   expect(newModel.name).toBe("new-model")
-  expect(newModel.tier).toBe("open-source")
   expect(newModel.reasoning).toBe(false)
   expect(newModel.limit.context).toBe(500000)
   expect(newModel.limit.output).toBe(131072)
 })
 
-test("mergeModels uses default context when API model has none", () => {
-  const result = mergeModels([], [{ id: "new/model" }])
-  expect(result[0].limit.context).toBe(131072)
-  expect(result[0].limit.output).toBe(131072)
+test("config hook uses default context when API model has none", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels(
+    [],
+    [{ id: "new/model" }],
+  )
+  expect(models["model"].limit.context).toBe(131072)
+  expect(models["model"].limit.output).toBe(131072)
 })
 
-test("mergeModels preserves curated fields for local entries", () => {
-  const local = [sampleModel({
-    id: "test/model-a",
-    name: "Custom Name",
-    tier: "premium",
-    reasoning: true,
-    cost: { input: 5, output: 25 },
-  })]
-  const result = mergeModels(local, [{ id: "test/model-a", context_length: 999 }])
-  expect(result[0].name).toBe("Custom Name")
-  expect(result[0].tier).toBe("premium")
-  expect(result[0].reasoning).toBe(true)
-  expect(result[0].cost.input).toBe(5)
+test("config hook preserves curated fields for local entries", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels(
+    [sampleModel({
+      name: "Custom Name",
+      tier: "premium",
+      reasoning: true,
+      cost: { input: 5, output: 25 },
+    })],
+    [{ id: "test/model-a", context_length: 999 }],
+  )
+  expect(models["model-a"].name).toBe("Custom Name")
+  expect(models["model-a"].reasoning).toBe(true)
+  expect(models["model-a"].cost.input).toBe(5)
 })
 
 // --- Config hook integration tests ---

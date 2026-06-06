@@ -67,7 +67,7 @@ async function fetchModelsFromApi(): Promise<ApiModel[] | null> {
   }
 }
 
-export function mergeModels(local: ModelEntry[], api: ApiModel[]): ModelEntry[] {
+function mergeModels(local: ModelEntry[], api: ApiModel[]): ModelEntry[] {
   const apiMap = new Map(api.map((m) => [m.id, m]))
   const merged: ModelEntry[] = []
 
