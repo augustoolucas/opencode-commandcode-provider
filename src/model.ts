@@ -10,6 +10,7 @@ import type {
 } from "@ai-sdk/provider"
 import { buildRequest } from "./convert.js"
 import { parseStreamEvents } from "./stream.js"
+import { gatherContext } from "./context.js"
 
 const DEFAULT_BASE_URL = "https://api.commandcode.ai"
 // x-command-code-version must match the Command Code CLI version for API compatibility
@@ -415,7 +416,8 @@ export class CommandCodeLanguageModel implements LanguageModelV3 {
   }
 
   async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-    const body = buildRequest(this.modelId, options)
+    const context = gatherContext()
+    const body = buildRequest(this.modelId, options, context)
     const requestBody = JSON.stringify(body)
 
     const controller = new AbortController()

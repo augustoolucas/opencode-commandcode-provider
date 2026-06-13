@@ -8,6 +8,7 @@ import type {
   LanguageModelV3ToolResultPart,
   LanguageModelV3ToolResultOutput,
 } from "@ai-sdk/provider"
+import type { ProjectContext } from "./context.js"
 
 type CCMessage =
   | { role: "user"; content: string | unknown[] }
@@ -176,6 +177,7 @@ function convertTools(
 export function buildRequest(
   modelId: string,
   options: LanguageModelV3CallOptions,
+  context?: ProjectContext,
 ): CCRequestEnvelope {
   let systemPrompt = ""
   const messages: CCMessage[] = []
@@ -210,21 +212,20 @@ export function buildRequest(
     params.thinking = ccOpts.thinking
   }
 
+  const ctx = context
   return {
     config: {
       workingDir: process.cwd() ?? "/",
       date: new Date().toISOString().split("T")[0] ?? "",
       environment: `${process.platform}-${process.arch}`,
-      // Stub: opencode does not expose project structure context
-      structure: [],
-      isGitRepo: false,
-      currentBranch: "",
-      mainBranch: "",
-      gitStatus: "",
-      recentCommits: [],
+      structure: ctx?.structure ?? [],
+      isGitRepo: ctx?.git.isGitRepo ?? false,
+      currentBranch: ctx?.git.currentBranch ?? "",
+      mainBranch: ctx?.git.mainBranch ?? "",
+      gitStatus: ctx?.git.gitStatus ?? "",
+      recentCommits: ctx?.git.recentCommits ?? [],
     },
     memory: "",
-    // Stub: taste/memory/permissionMode are Command Code CLI features not exposed via provider API
     taste: "",
     skills: null,
     permissionMode: "standard",
