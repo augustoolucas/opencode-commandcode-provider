@@ -8,6 +8,10 @@ const MODELS_JSON = join(PROJECT_ROOT, "models.json")
 const GLOBAL_CONFIG = join(homedir(), ".config", "opencode", "opencode.jsonc")
 const NPM_PACKAGE = "command-code"
 const TMP_DIR = join("/tmp", "cc-model-sync")
+// Authoritative, OpenAI-compatible model listing. Source of truth for which models exist,
+// their display names, and context windows. Pricing is not exposed here, so cost data is
+// enriched from the CLI bundle (see fetchLatestBundle / extractCostData).
+const MODELS_ENDPOINT = "https://api.commandcode.ai/provider/v1/models"
 
 interface ModelEntry {
   id: string
@@ -31,16 +35,30 @@ interface CostEntry {
   cacheHitCost: number
 }
 
-interface SnEntry {
+interface EndpointModel {
   id: string
-  provider: string
-  spec: string
-  label: string
   name: string
-  description: string
+  context_length: number
+}
+
+// Per-model overrides for fields the /provider/v1/models endpoint does not expose
+// (reasoning capability, tool-call support). Anything not listed falls back to sensible
+// defaults in buildModelEntry (reasoning: true, tool_call: true).
+interface ModelMeta {
   reasoning?: boolean
-  reasoningEfforts?: string[]
-  contextWindow?: number
+  tool_call?: boolean
+}
+
+// Models that are NOT reasoning-capable. Everything else defaults to reasoning: true.
+// (Output limits live in FALLBACK_LIMITS; tool_call defaults to true.)
+const MODEL_META: Record<string, ModelMeta> = {
+  "claude-haiku-4-5-20251001": { reasoning: false },
+  "zai-org/GLM-5": { reasoning: false },
+  "zai-org/GLM-5.1": { reasoning: false },
+  "moonshotai/Kimi-K2.5": { reasoning: false },
+  "moonshotai/Kimi-K2.6": { reasoning: false },
+  "MiniMaxAI/MiniMax-M2.5": { reasoning: false },
+  "MiniMaxAI/MiniMax-M2.7": { reasoning: false },
 }
 
 const FALLBACK_COSTS: Record<string, { input: number; output: number; cache_read?: number; cache_write?: number }> = {
@@ -81,25 +99,15 @@ const FALLBACK_LIMITS: Record<string, { context: number; output: number }> = {
   "google/gemini-3.1-flash-lite": { context: 1000000, output: 65536 },
 }
 
-const HARDCODED_EXTRAS: SnEntry[] = [
-  {
-    id: "Qwen/Qwen3.7-Max",
-    provider: "vercel-ai-gateway",
-    spec: "chatComplete",
-    label: "Qwen 3.7 Max",
-    name: "Qwen 3.7 Max",
-    description: "latest Qwen Max model",
-    reasoning: true,
-  },
-]
-
-const TIER_MAP: Record<string, "premium" | "open-source"> = {
-  "anthropic": "premium",
-  "openai": "premium",
-  "baseten": "open-source",
-  "vercel-ai-gateway": "open-source",
-  "openrouter": "open-source",
-  "cloudflare-ai-gateway": "open-source",
+async function fetchModelList(): Promise<EndpointModel[]> {
+  console.log(`Fetching model list from ${MODELS_ENDPOINT}...`)
+  const resp = await fetch(MODELS_ENDPOINT)
+  if (!resp.ok) throw new Error(`models endpoint returned ${resp.status}`)
+  const json = (await resp.json()) as { data?: Array<{ id: string; name: string; context_length: number }> }
+  if (!Array.isArray(json.data) || json.data.length === 0) {
+    throw new Error("models endpoint returned no models")
+  }
+  return json.data.map((m) => ({ id: m.id, name: m.name, context_length: m.context_length }))
 }
 
 async function fetchLatestBundle(): Promise<{ source: string; version: string }> {
@@ -170,40 +178,6 @@ function extractWt(source: string): Record<string, string> {
   return evaluateWithContext(normalizeForEval(raw), {})
 }
 
-function extractSpecConstants(source: string): { chatComplete: string; responses: string; qt: string } {
-  const anchorIdx = source.indexOf('SONNET_4_6:{id:"claude-sonnet-4-6"')
-  if (anchorIdx < 0) throw new Error("Could not find model catalog anchor")
-
-  const before = source.slice(Math.max(0, anchorIdx - 5000), anchorIdx)
-
-  const chatMatch = before.match(/([A-Za-z_$]+)="chatComplete"/)
-  const respMatch = before.match(/([A-Za-z_$]+)="responses"/)
-  if (!chatMatch || !respMatch) throw new Error("Could not find spec constants")
-
-  const qtMatch = before.match(/([A-Za-z_$]+)=Vt\[0\]/)
-  const qtVar = qtMatch ? qtMatch[1] : null
-
-  return {
-    chatComplete: chatMatch[1],
-    responses: respMatch[1],
-    qt: qtVar || "",
-  }
-}
-
-function extractModelCatalog(
-  source: string,
-  wt: Record<string, string>,
-  wtName: string,
-  spec: ReturnType<typeof extractSpecConstants>,
-): Record<string, SnEntry> {
-  const raw = findBalancedObject(source, 'SONNET_4_6:{id:"claude-sonnet-4-6"')
-  const ctx: Record<string, unknown> = { [wtName]: wt }
-  ctx[spec.chatComplete] = "chatComplete"
-  ctx[spec.responses] = "responses"
-  if (spec.qt) ctx[spec.qt] = wt.VERCEL_AI_GATEWAY
-  return evaluateWithContext(normalizeForEval(raw), ctx)
-}
-
 function extractCostData(source: string, wt: Record<string, string>, wtName: string): Record<string, CostEntry[]> {
   const anchor = '{id:"anthropic:claude-sonnet-4-'
   const anchorIdx = source.indexOf(anchor)
@@ -265,38 +239,37 @@ function buildCostMap(costs: Record<string, CostEntry[]>): Map<string, CostEntry
   return map
 }
 
-function buildModelEntry(
-  entry: SnEntry,
-  costMap: Map<string, CostEntry>,
-): ModelEntry | null {
-  const provider = entry.provider || "unknown"
-  const tier = TIER_MAP[provider] ?? "open-source"
+function buildModelEntry(model: EndpointModel, costMap: Map<string, CostEntry>): ModelEntry {
+  // Namespaced ids (e.g. "deepseek/...", "xiaomi/...") are open-source; bare ids
+  // (claude-*, gpt-*) are premium. Matches every model the endpoint currently serves.
+  const tier: "premium" | "open-source" = model.id.includes("/") ? "open-source" : "premium"
 
-  const costEntry = costMap.get(entry.id)
+  const costEntry = costMap.get(model.id)
   let cost: { input: number; output: number; cache_read?: number; cache_write?: number }
   if (costEntry) {
-    cost = {
-      input: costEntry.promptCost,
-      output: costEntry.completionCost,
-    }
+    cost = { input: costEntry.promptCost, output: costEntry.completionCost }
     if (costEntry.cacheHitCost > 0) cost.cache_read = costEntry.cacheHitCost
     if (costEntry.cacheWrite5mCost > 0) cost.cache_write = costEntry.cacheWrite5mCost
+  } else if (FALLBACK_COSTS[model.id]) {
+    cost = FALLBACK_COSTS[model.id]!
   } else {
-    const fallback = FALLBACK_COSTS[entry.id]
-    if (!fallback) return null
-    cost = fallback
+    // New/unpriced model: keep it in the list with zeroed cost rather than dropping it.
+    console.warn(`  No cost data for ${model.id} — defaulting to 0 (add to FALLBACK_COSTS to fix)`)
+    cost = { input: 0, output: 0 }
   }
 
-  const limit = entry.contextWindow
-    ? { context: entry.contextWindow, output: FALLBACK_LIMITS[entry.id]?.output ?? 65536 }
-    : FALLBACK_LIMITS[entry.id] ?? { context: 200000, output: 65536 }
+  const meta = MODEL_META[model.id]
+  const limit = {
+    context: model.context_length ?? FALLBACK_LIMITS[model.id]?.context ?? 200000,
+    output: FALLBACK_LIMITS[model.id]?.output ?? 65536,
+  }
 
   return {
-    id: entry.id,
-    name: entry.name,
+    id: model.id,
+    name: model.name,
     tier,
-    reasoning: entry.reasoning || (entry.reasoningEfforts?.length ?? 0) > 0,
-    tool_call: true,
+    reasoning: meta?.reasoning ?? true,
+    tool_call: meta?.tool_call ?? true,
     cost,
     limit,
     variants: entry.reasoningEfforts?.length
@@ -404,6 +377,11 @@ async function main() {
   const args = process.argv.slice(2)
   const shouldUpdateGlobal = args.includes("--update-global")
 
+  // Authoritative model list (id, name, context window).
+  const list = await fetchModelList()
+  console.log(`  Found ${list.length} models`)
+
+  // CLI bundle is used only to enrich the list with pricing.
   const { source, version } = await fetchLatestBundle()
   console.log(`Read CLI bundle v${version} (${(source.length / 1024).toFixed(0)} KB)`)
 
@@ -412,40 +390,12 @@ async function main() {
   const wtName = getWtVarName(source)
   console.log(`  Provider enum var: ${wtName}, keys: ${Object.keys(wt).join(", ")}`)
 
-  console.log("Extracting spec constants...")
-  const spec = extractSpecConstants(source)
-  console.log(`  chatComplete=${spec.chatComplete}, responses=${spec.responses}, qt=${spec.qt || "(none)"}`)
-
-  console.log("Extracting model catalog...")
-  const models = extractModelCatalog(source, wt, wtName, spec)
-  const modelCount = Object.keys(models).length
-  console.log(`  Found ${modelCount} models`)
-
   console.log("Extracting cost data...")
   const costs = extractCostData(source, wt, wtName)
   const costMap = buildCostMap(costs)
   console.log(`  Found ${costMap.size} cost entries`)
 
-  const entries: ModelEntry[] = []
-
-  for (const [, model] of Object.entries(models)) {
-    const entry = buildModelEntry(model, costMap)
-    if (entry) {
-      entries.push(entry)
-    } else {
-      console.warn(`  Skipping ${model.id}: no cost data`)
-    }
-  }
-
-  for (const extra of HARDCODED_EXTRAS) {
-    if (!entries.some((e) => e.id === extra.id)) {
-      const entry = buildModelEntry(extra, costMap)
-      if (entry) {
-        console.log(`  Adding hardcoded extra: ${extra.id}`)
-        entries.push(entry)
-      }
-    }
-  }
+  const entries: ModelEntry[] = list.map((model) => buildModelEntry(model, costMap))
 
   entries.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier === "premium" ? -1 : 1

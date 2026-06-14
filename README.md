@@ -76,6 +76,7 @@ When this file exists with `disableModelSync: true`, the plugin skips the API fe
 
 | Model ID | Name | Tier | Reasoning | Context |
 |---|---|---|---|---|
+| `claude-fable-5`                           | Claude Fable 5              | premium      | yes | 1M     |
 | `claude-haiku-4-5-20251001`                | Claude Haiku 4.5            | premium      | no  | 200K   |
 | `claude-opus-4-7`                          | Claude Opus 4.7             | premium      | yes | 1M     |
 | `claude-opus-4-8`                          | Claude Opus 4.8             | premium      | yes | 1M     |
@@ -92,17 +93,19 @@ When this file exists with `disableModelSync: true`, the plugin skips the API fe
 | `zai-org/GLM-5.1`                          | GLM-5.1                     | open-source  | no  | 200K   |
 | `moonshotai/Kimi-K2.5`                     | Kimi K2.5                   | open-source  | no  | 256K   |
 | `moonshotai/Kimi-K2.6`                     | Kimi K2.6                   | open-source  | no  | 256K   |
+| `moonshotai/Kimi-K2.7-Code`                | Kimi K2.7 Code              | open-source  | yes | 256K   |
+| `xiaomi/mimo-v2.5`                         | MiMo V2.5                   | open-source  | yes | 1M     |
+| `xiaomi/mimo-v2.5-pro`                     | MiMo V2.5 Pro               | open-source  | yes | 1M     |
 | `MiniMaxAI/MiniMax-M2.5`                   | MiniMax M2.5                | open-source  | no  | 200K   |
 | `MiniMaxAI/MiniMax-M2.7`                   | MiniMax M2.7                | open-source  | no  | 200K   |
-| `MiniMaxAI/MiniMax-M3`                     | MiniMax M3                  | open-source  | no  | 1M     |
+| `MiniMaxAI/MiniMax-M3`                     | MiniMax M3                  | open-source  | yes | 1M     |
+| `nvidia/nemotron-3-ultra-550b-a55b`        | Nemotron 3 Ultra            | open-source  | yes | 1M     |
 | `Qwen/Qwen3.6-Max-Preview`                 | Qwen 3.6 Max Preview        | open-source  | yes | 200K   |
 | `Qwen/Qwen3.6-Plus`                        | Qwen 3.6 Plus               | open-source  | yes | 200K   |
 | `Qwen/Qwen3.7-Max`                         | Qwen 3.7 Max                | open-source  | yes | 1M     |
 | `Qwen/Qwen3.7-Plus`                        | Qwen 3.7 Plus               | open-source  | yes | 1M     |
 | `stepfun/Step-3.5-Flash`                   | Step 3.5 Flash              | open-source  | yes | 1M     |
 | `stepfun/Step-3.7-Flash`                   | Step 3.7 Flash              | open-source  | yes | 256K   |
-| `xiaomi/mimo-v2.5`                         | Xiaomi MiMo V2.5            | open-source  | no  | 1M     |
-| `xiaomi/mimo-v2.5-pro`                     | Xiaomi MiMo V2.5 Pro        | open-source  | no  | 1M     |
 
 Models are automatically synced from the CommandCode API at startup. Context sizes and new models are updated on each restart. The local [`models.json`](./models.json) serves as an offline fallback.
 
