@@ -28,6 +28,7 @@ export interface ModelEntry {
 
 interface ApiModel {
   id: string
+  name?: string
   context_length?: number
 }
 
@@ -47,14 +48,16 @@ function loadModels(): ModelEntry[] {
 async function fetchModelsFromApi(): Promise<ApiModel[] | null> {
   if (loadPluginConfig().disableModelSync) return null
 
+  // The model listing endpoint is public, so we sync even without credentials.
+  // Most users authenticate via `/connect` (which doesn't export COMMANDCODE_API_KEY),
+  // so requiring the env var would disable auto-sync for them. Send the key only if present.
   const apiKey = process.env.COMMANDCODE_API_KEY
-  if (!apiKey) return null
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 5000)
   try {
     const resp = await fetch("https://api.commandcode.ai/provider/v1/models", {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       signal: controller.signal,
     })
 
@@ -85,11 +88,17 @@ function mergeModels(local: ModelEntry[], api: ApiModel[]): ModelEntry[] {
   for (const [id, apiModel] of apiMap) {
     merged.push({
       id,
-      name: id.split("/").pop() ?? id,
-      tier: "open-source",
+      // Prefer the API-provided display name; fall back to the id's last segment.
+      name: apiModel.name ?? id.split("/").pop() ?? id,
+      // Namespaced ids (e.g. "xiaomi/...") are open-source; bare ids (claude-*, gpt-*)
+      // are premium. Tier maps to Command Code plan access, so guessing wrong here would
+      // misrepresent which plans can use the model.
+      tier: id.includes("/") ? "open-source" : "premium",
       reasoning: false,
       tool_call: true,
-      cost: { input: 0.5, output: 2 },
+      // Pricing isn't exposed by the listing endpoint; leave it zeroed rather than
+      // inventing a rate that would feed incorrect cost accounting.
+      cost: { input: 0, output: 0 },
       limit: { context: apiModel.context_length ?? 131072, output: 131072 },
     })
   }

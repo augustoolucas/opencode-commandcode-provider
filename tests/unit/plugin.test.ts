@@ -213,8 +213,20 @@ test("config hook adds new API-only models with defaults", async () => {
   expect(newModel).toBeDefined()
   expect(newModel.name).toBe("new-model")
   expect(newModel.reasoning).toBe(false)
+  // Pricing is unknown for API-only models, so it stays zeroed rather than fabricated.
+  expect((newModel.cost as Record<string, number>).input).toBe(0)
+  expect((newModel.cost as Record<string, number>).output).toBe(0)
   expect(newModel.limit.context).toBe(500000)
   expect(newModel.limit.output).toBe(131072)
+})
+
+test("config hook uses the API-provided name for new models", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels(
+    [],
+    [{ id: "xiaomi/mimo-v2.5-pro", name: "MiMo V2.5 Pro", context_length: 1000000 }],
+  )
+  expect(models["mimo-v2.5-pro"].name).toBe("MiMo V2.5 Pro")
 })
 
 test("config hook uses default context when API model has none", async () => {
@@ -256,16 +268,32 @@ afterEach(() => {
   else process.env.COMMANDCODE_API_KEY = originalApiKey
 })
 
-test("config hook falls back to local when API key is missing", async () => {
+test("config hook syncs without an API key and sends no auth header", async () => {
   delete process.env.COMMANDCODE_API_KEY
+  const tracker = mockFetchTrack()
+  tracker.respondWith({
+    json: () => Promise.resolve({ data: [{ id: "new/api-only", context_length: 321000 }] }),
+  })
 
-  const plugin = await pluginFn()
-  const config: Record<string, unknown> = { provider: { commandcode: {} } }
-  await plugin.config(config)
+  try {
+    const plugin = await pluginFn()
+    const config: Record<string, unknown> = { provider: { commandcode: {} } }
+    await plugin.config(config)
 
-  const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
-  const models = cc.models as Record<string, Record<string, unknown>>
-  expect(Object.keys(models).length).toBeGreaterThan(0)
+    // The listing endpoint is public, so the fetch still happens — but with no token.
+    expect(tracker.calls).toHaveLength(1)
+    expect(tracker.calls[0].url).toBe("https://api.commandcode.ai/provider/v1/models")
+    const headers = (tracker.calls[0].options.headers ?? {}) as Record<string, string>
+    expect(headers["Authorization"]).toBeUndefined()
+
+    const cc = (config.provider as Record<string, Record<string, unknown>>).commandcode
+    const models = cc.models as Record<string, Record<string, unknown>>
+    expect(Object.keys(models).length).toBeGreaterThan(0)
+    // The API-only model was merged in despite having no credentials.
+    expect(models["api-only"]).toBeDefined()
+  } finally {
+    tracker.restore()
+  }
 })
 
 test("config hook uses bundled models on API error without merging", async () => {

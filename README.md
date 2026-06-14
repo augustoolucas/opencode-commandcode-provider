@@ -58,7 +58,7 @@ COMMANDCODE_API_KEY=your-key opencode
 
 ### Disabling Auto-Sync
 
-By default, the plugin syncs model specs from the CommandCode API on every opencode startup. The sync is best-effort and silent — if the API is unreachable, returns invalid JSON, or the `COMMANDCODE_API_KEY` is invalid, the plugin falls back to the bundled [`models.json`](./models.json).
+By default, the plugin syncs model specs from the CommandCode API on every opencode startup. The model listing endpoint is public, so the sync runs even without credentials (if `COMMANDCODE_API_KEY` is set it is sent, otherwise the request is made unauthenticated). The sync is best-effort and silent — if the API is unreachable or returns invalid JSON, the plugin falls back to the bundled [`models.json`](./models.json).
 
 To disable the sync, create `~/.config/opencode/commandcode-go-opencode-provider.json`:
 
