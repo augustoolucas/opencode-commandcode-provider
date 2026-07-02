@@ -281,3 +281,71 @@ export async function withCorruptModels<T>(fn: () => Promise<T>): Promise<T> {
     readFileSpy.mockRestore()
   }
 }
+
+/**
+ * Mock fetch to return a sequence of responses (for retry testing).
+ * Each call to fetch returns the next response in the sequence.
+ * The last response is reused for any additional calls.
+ */
+export function mockFetchRetrySequence(
+  responses: Array<{
+    ok?: boolean
+    status?: number
+    statusText?: string
+    body?: ReadableStream<Uint8Array> | null
+    headers?: Headers
+    errorBody?: string
+  }>,
+): { calls: MockFetchCall[]; restore: () => void } {
+  const encoder = new TextEncoder()
+  const calls: MockFetchCall[] = []
+  let callIndex = 0
+  const original = globalThis.fetch
+
+  globalThis.fetch = ((input: RequestInfo | URL, options?: RequestInit) => {
+    calls.push({
+      url: typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+      options: options ?? {},
+    })
+    const idx = Math.min(callIndex, responses.length - 1)
+    callIndex++
+    const resp = responses[idx]
+    const errorBody = resp.errorBody ?? ""
+    return Promise.resolve({
+      ok: resp.ok ?? true,
+      status: resp.status ?? 200,
+      statusText: resp.statusText ?? "OK",
+      headers: resp.headers ?? new Headers(),
+      body: resp.body ?? null,
+      text: () => Promise.resolve(errorBody),
+      json: () => {
+        try { return Promise.resolve(JSON.parse(errorBody)) } catch { return Promise.resolve({}) }
+      },
+    } as Response)
+  }) as typeof globalThis.fetch
+
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = original
+    },
+  }
+}
+
+/**
+ * Create a simple SSE stream from data strings.
+ */
+export function makeSSEStream(chunks: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  let i = 0
+  return new ReadableStream({
+    pull(controller) {
+      if (i >= chunks.length) {
+        controller.close()
+        return
+      }
+      controller.enqueue(encoder.encode(chunks[i]))
+      i++
+    },
+  })
+}

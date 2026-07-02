@@ -1,6 +1,6 @@
 import { expect, test, beforeAll, afterAll } from "bun:test"
 import { CommandCodeLanguageModel } from "../../src/model.js"
-import { mockFetchTrack, mockFetchError, mockFetchStream, makeCallOptions } from "../helpers/mocks.js"
+import { mockFetchTrack, mockFetchError, mockFetchStream, mockFetchRetrySequence, makeCallOptions } from "../helpers/mocks.js"
 
 const MODEL_ID = "test-model"
 const API_KEY = "sk-test-key"
@@ -126,8 +126,14 @@ test("doStream throws descriptive error on non-OK response", async () => {
   restore()
 })
 
-test("doStream throws on HTTP error without JSON body", async () => {
-  const { restore } = mockFetchError(500, "Internal Server Error")
+test("doStream throws on HTTP error without JSON body", { timeout: 30000 }, async () => {
+  // 500 is retryable — return it for all 4 attempts (1 initial + 3 retries)
+  const { restore } = mockFetchRetrySequence([
+    { ok: false, status: 500, statusText: "Internal Server Error", errorBody: "" },
+    { ok: false, status: 500, statusText: "Internal Server Error", errorBody: "" },
+    { ok: false, status: 500, statusText: "Internal Server Error", errorBody: "" },
+    { ok: false, status: 500, statusText: "Internal Server Error", errorBody: "" },
+  ])
   const model = makeModel()
   expect(model.doStream(makeCallOptions())).rejects.toThrow("Command Code API error: 500 Internal Server Error")
   restore()
@@ -218,7 +224,7 @@ test("doGenerate handles tool calls", async () => {
 })
 
 test("doStream includes model ID in error messages", async () => {
-  const { restore } = mockFetchError(500, "Server Error", JSON.stringify({
+  const { restore } = mockFetchError(400, "Bad Request", JSON.stringify({
     error: { message: "Something broke" },
   }))
   const model = makeModel()
@@ -230,4 +236,182 @@ test("doStream includes model ID in error messages", async () => {
     expect(msg).toContain("[model=test-model]")
   }
   restore()
+})
+
+// --- Retry/Backoff tests ---
+
+test("fetchWithRetry retries on HTTP 500 then succeeds", { timeout: 15000 }, async () => {
+  const encoder = new TextEncoder()
+  const successBody = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"type":"start"}\n\n'))
+      controller.close()
+    },
+  })
+  const { calls, restore } = mockFetchRetrySequence([
+    { ok: false, status: 500, statusText: "Internal Server Error", errorBody: '{"error":{"message":"server oops"}}' },
+    { ok: true, status: 200, body: successBody },
+  ])
+  const model = makeModel()
+  const result = await model.doStream(makeCallOptions())
+  restore()
+
+  // Should have made 2 fetch calls (1 failed + 1 success)
+  expect(calls).toHaveLength(2)
+  // Result should have a valid stream
+  expect(result.stream).toBeDefined()
+  const reader = result.stream.getReader()
+  const { done } = await reader.read()
+  expect(done).toBe(false)
+  reader.releaseLock()
+})
+
+test("fetchWithRetry retries on HTTP 429 then succeeds", { timeout: 15000 }, async () => {
+  const encoder = new TextEncoder()
+  const successBody = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"type":"start"}\n\n'))
+      controller.close()
+    },
+  })
+  const { calls, restore } = mockFetchRetrySequence([
+    { ok: false, status: 429, statusText: "Too Many Requests", errorBody: '{"error":{"message":"rate limited"}}' },
+    { ok: true, status: 200, body: successBody },
+  ])
+  const model = makeModel()
+  const result = await model.doStream(makeCallOptions())
+  restore()
+
+  expect(calls).toHaveLength(2)
+  expect(result.stream).toBeDefined()
+})
+
+test("fetchWithRetry fails fast on 401 (non-retryable)", async () => {
+  const { calls, restore } = mockFetchRetrySequence([
+    { ok: false, status: 401, statusText: "Unauthorized", errorBody: '{"error":{"message":"Invalid API key"}}' },
+  ])
+  const model = makeModel()
+  try {
+    await model.doStream(makeCallOptions())
+    expect.unreachable("Should have thrown")
+  } catch (err) {
+    expect((err as Error).message).toContain("Invalid API key")
+  }
+  restore()
+
+  // Should have made only 1 fetch call — no retries for 4xx
+  expect(calls).toHaveLength(1)
+})
+
+test("fetchWithRetry fails fast on 403 (non-retryable)", async () => {
+  const { calls, restore } = mockFetchRetrySequence([
+    { ok: false, status: 403, statusText: "Forbidden", errorBody: '{"error":{"message":"Forbidden"}}' },
+  ])
+  const model = makeModel()
+  expect(model.doStream(makeCallOptions())).rejects.toThrow("Forbidden")
+  restore()
+  expect(calls).toHaveLength(1)
+})
+
+test("fetchWithRetry respects max retries and throws last error", { timeout: 30000 }, async () => {
+  const { calls, restore } = mockFetchRetrySequence([
+    { ok: false, status: 500, statusText: "Server Error", errorBody: '{"error":{"message":"down"}}' },
+    { ok: false, status: 500, statusText: "Server Error", errorBody: '{"error":{"message":"down"}}' },
+    { ok: false, status: 500, statusText: "Server Error", errorBody: '{"error":{"message":"down"}}' },
+    { ok: false, status: 500, statusText: "Server Error", errorBody: '{"error":{"message":"down"}}' },
+  ])
+  const model = makeModel()
+  try {
+    await model.doStream(makeCallOptions())
+    expect.unreachable("Should have thrown")
+  } catch (err) {
+    expect((err as Error).message).toContain("down")
+  }
+  restore()
+
+  // Should have made 4 fetch calls (1 initial + 3 retries)
+  expect(calls).toHaveLength(4)
+})
+
+test("fetchWithRetry fails fast on quota/auth error patterns in body", async () => {
+  const { calls, restore } = mockFetchRetrySequence([
+    { ok: false, status: 400, statusText: "Bad Request", errorBody: '{"error":{"message":"insufficient credit balance"}}' },
+  ])
+  const model = makeModel()
+  try {
+    await model.doStream(makeCallOptions())
+    expect.unreachable("Should have thrown")
+  } catch (err) {
+    expect((err as Error).message).toContain("insufficient credit")
+  }
+  restore()
+  expect(calls).toHaveLength(1)
+})
+
+test("fetchWithRetry fails fast on validation_error", async () => {
+  const { calls, restore } = mockFetchRetrySequence([
+    { ok: false, status: 400, statusText: "Bad Request", errorBody: '{"type":"validation_error","message":"Invalid params"}' },
+  ])
+  const model = makeModel()
+  expect(model.doStream(makeCallOptions())).rejects.toThrow("Invalid params")
+  restore()
+  expect(calls).toHaveLength(1)
+})
+
+test("fetchWithRetry retries network errors (fetch throws)", { timeout: 15000 }, async () => {
+  const encoder = new TextEncoder()
+  const original = globalThis.fetch
+  let callCount = 0
+  globalThis.fetch = ((async () => {
+    callCount++
+    if (callCount === 1) {
+      throw new Error("fetch failed: ECONNRESET")
+    }
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"type":"start"}\n\n'))
+          controller.close()
+        },
+      }),
+      text: () => Promise.resolve(""),
+    } as Response
+  }) as typeof globalThis.fetch)
+
+  const model = makeModel()
+  const result = await model.doStream(makeCallOptions())
+  globalThis.fetch = original
+
+  expect(callCount).toBe(2)
+  expect(result.stream).toBeDefined()
+})
+
+test("doStream sends retry-specific log messages on 5xx", { timeout: 15000 }, async () => {
+  const encoder = new TextEncoder()
+  const successBody = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"type":"start"}\n\n'))
+      controller.close()
+    },
+  })
+  const { restore } = mockFetchRetrySequence([
+    { ok: false, status: 502, statusText: "Bad Gateway", errorBody: '{"error":{"message":"bad gateway"}}' },
+    { ok: true, status: 200, body: successBody },
+  ])
+
+  const errors: string[] = []
+  const origError = console.error
+  console.error = (...args: any[]) => errors.push(args.join(" "))
+
+  const model = makeModel()
+  await model.doStream(makeCallOptions())
+
+  console.error = origError
+  restore()
+
+  expect(errors.some((e) => e.includes("[CC-Retry]") && e.includes("HTTP 502"))).toBe(true)
 })
