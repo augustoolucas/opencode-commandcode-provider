@@ -23,6 +23,7 @@ export interface ModelEntry {
   tool_call: boolean
   cost: { input: number; output: number; cache_read?: number; cache_write?: number }
   limit: { context: number; output: number }
+  variants?: Record<string, Record<string, unknown>>
 }
 
 interface ApiModel {
@@ -136,6 +137,7 @@ export default async function commandcodePlugin() {
             tool_call: entry.tool_call,
             cost: costObj,
             limit: entry.limit,
+            ...(entry.variants ? { variants: entry.variants } : {}),
           }
         }
         cc.models = modelsObj

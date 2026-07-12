@@ -3,7 +3,7 @@
     "id": "MiniMaxAI/MiniMax-M2.5",
     "name": "MiniMax M2.5",
     "tier": "open-source",
-    "reasoning": false,
+    "reasoning": true,
     "tool_call": true,
     "cost": {
       "input": 0.5,
@@ -18,7 +18,7 @@
     "id": "MiniMaxAI/MiniMax-M2.7",
     "name": "MiniMax M2.7",
     "tier": "open-source",
-    "reasoning": false,
+    "reasoning": true,
     "tool_call": true,
     "cost": {
       "input": 0.3,
@@ -34,7 +34,7 @@
     "id": "MiniMaxAI/MiniMax-M3",
     "name": "MiniMax M3",
     "tier": "open-source",
-    "reasoning": false,
+    "reasoning": true,
     "tool_call": true,
     "cost": {
       "input": 0.5,
@@ -43,6 +43,18 @@
     "limit": {
       "context": 1000000,
       "output": 131072
+    },
+    "variants": {
+      "none": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "thinking": {
+        "thinking": {
+          "type": "adaptive"
+        }
+      }
     }
   },
   {
@@ -193,6 +205,23 @@
     "limit": {
       "context": 1000000,
       "output": 384000
+    },
+    "variants": {
+      "none": {
+        "reasoningEffort": "none"
+      },
+      "low": {
+        "reasoningEffort": "low"
+      },
+      "medium": {
+        "reasoningEffort": "medium"
+      },
+      "high": {
+        "reasoningEffort": "high"
+      },
+      "max": {
+        "reasoningEffort": "max"
+      }
     }
   },
   {
@@ -209,6 +238,23 @@
     "limit": {
       "context": 1000000,
       "output": 384000
+    },
+    "variants": {
+      "none": {
+        "reasoningEffort": "none"
+      },
+      "low": {
+        "reasoningEffort": "low"
+      },
+      "medium": {
+        "reasoningEffort": "medium"
+      },
+      "high": {
+        "reasoningEffort": "high"
+      },
+      "max": {
+        "reasoningEffort": "max"
+      }
     }
   },
   {
@@ -374,7 +420,7 @@
     "id": "xiaomi/mimo-v2.5",
     "name": "Xiaomi MiMo V2.5",
     "tier": "open-source",
-    "reasoning": false,
+    "reasoning": true,
     "tool_call": true,
     "cost": {
       "input": 0.25,
@@ -383,13 +429,24 @@
     "limit": {
       "context": 1000000,
       "output": 131072
+    },
+    "variants": {
+      "low": {
+        "reasoningEffort": "low"
+      },
+      "medium": {
+        "reasoningEffort": "medium"
+      },
+      "high": {
+        "reasoningEffort": "high"
+      }
     }
   },
   {
     "id": "xiaomi/mimo-v2.5-pro",
     "name": "Xiaomi MiMo V2.5 Pro",
     "tier": "open-source",
-    "reasoning": false,
+    "reasoning": true,
     "tool_call": true,
     "cost": {
       "input": 0.5,
@@ -398,6 +455,17 @@
     "limit": {
       "context": 1000000,
       "output": 131072
+    },
+    "variants": {
+      "low": {
+        "reasoningEffort": "low"
+      },
+      "medium": {
+        "reasoningEffort": "medium"
+      },
+      "high": {
+        "reasoningEffort": "high"
+      }
     }
   },
   {
