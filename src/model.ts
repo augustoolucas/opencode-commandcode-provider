@@ -123,7 +123,7 @@ function isRetryableStatus(status: number): boolean {
 function backoffDelay(attempt: number): number {
   const base = BACKOFF_SCHEDULE_MS[Math.min(attempt, BACKOFF_SCHEDULE_MS.length - 1)]
   // jitter ±25% to avoid synchronized retry storms
-  return base * (0.75 + Math.random() * 0.5)
+  return base! * (0.75 + Math.random() * 0.5)
 }
 
 function sleep(ms: number): Promise<void> {
