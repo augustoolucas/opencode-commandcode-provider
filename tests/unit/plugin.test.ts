@@ -212,7 +212,7 @@ test("config hook adds new API-only models with defaults", async () => {
   const newModel = models["new-model"]
   expect(newModel).toBeDefined()
   expect(newModel.name).toBe("new-model")
-  expect(newModel.reasoning).toBe(false)
+  expect(newModel.reasoning).toBe(true)
   // Pricing is unknown for API-only models, so it stays zeroed rather than fabricated.
   expect((newModel.cost as Record<string, number>).input).toBe(0)
   expect((newModel.cost as Record<string, number>).output).toBe(0)

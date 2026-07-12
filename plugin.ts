@@ -94,7 +94,7 @@ function mergeModels(local: ModelEntry[], api: ApiModel[]): ModelEntry[] {
       // are premium. Tier maps to Command Code plan access, so guessing wrong here would
       // misrepresent which plans can use the model.
       tier: id.includes("/") ? "open-source" : "premium",
-      reasoning: false,
+      reasoning: true,
       tool_call: true,
       // Pricing isn't exposed by the listing endpoint; leave it zeroed rather than
       // inventing a rate that would feed incorrect cost accounting.
