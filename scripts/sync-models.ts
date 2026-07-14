@@ -74,29 +74,30 @@ const FALLBACK_COSTS: Record<string, { input: number; output: number; cache_read
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cache_read: 0.03 },
 }
 
-const FALLBACK_LIMITS: Record<string, { context: number; output: number }> = {
-  "claude-haiku-4-5-20251001": { context: 200000, output: 8192 },
-  "claude-opus-4-6": { context: 200000, output: 32000 },
-  "claude-opus-4-7": { context: 200000, output: 32000 },
-  "claude-sonnet-4-6": { context: 200000, output: 16000 },
-  "gpt-5.5": { context: 256000, output: 128000 },
-  "gpt-5.4": { context: 256000, output: 128000 },
-  "gpt-5.3-codex": { context: 256000, output: 128000 },
-  "gpt-5.4-mini": { context: 256000, output: 128000 },
-  "moonshotai/Kimi-K2.6": { context: 262144, output: 131072 },
-  "moonshotai/Kimi-K2.5": { context: 262144, output: 131072 },
-  "zai-org/GLM-5": { context: 200000, output: 131072 },
-  "zai-org/GLM-5.1": { context: 200000, output: 131072 },
-  "MiniMaxAI/MiniMax-M2.5": { context: 1000000, output: 131072 },
-  "MiniMaxAI/MiniMax-M2.7": { context: 1000000, output: 131072 },
-  "deepseek/deepseek-v4-pro": { context: 1000000, output: 384000 },
-  "deepseek/deepseek-v4-flash": { context: 1000000, output: 384000 },
-  "Qwen/Qwen3.6-Max-Preview": { context: 1000000, output: 131072 },
-  "Qwen/Qwen3.6-Plus": { context: 1000000, output: 131072 },
-  "Qwen/Qwen3.7-Max": { context: 1000000, output: 131072 },
-  "stepfun/Step-3.5-Flash": { context: 1000000, output: 131072 },
-  "google/gemini-3.5-flash": { context: 1000000, output: 65536 },
-  "google/gemini-3.1-flash-lite": { context: 1000000, output: 65536 },
+const FALLBACK_LIMITS: Record<string, { output: number }> = {
+  "claude-haiku-4-5-20251001": { output: 8192 },
+  "claude-opus-4-6": { output: 32000 },
+  "claude-opus-4-7": { output: 32000 },
+  "claude-opus-4-8": { output: 131072 },
+  "claude-sonnet-4-6": { output: 16000 },
+  "gpt-5.5": { output: 128000 },
+  "gpt-5.4": { output: 128000 },
+  "gpt-5.3-codex": { output: 128000 },
+  "gpt-5.4-mini": { output: 128000 },
+  "moonshotai/Kimi-K2.6": { output: 131072 },
+  "moonshotai/Kimi-K2.5": { output: 131072 },
+  "zai-org/GLM-5": { output: 131072 },
+  "zai-org/GLM-5.1": { output: 131072 },
+  "MiniMaxAI/MiniMax-M2.5": { output: 131072 },
+  "MiniMaxAI/MiniMax-M2.7": { output: 131072 },
+  "deepseek/deepseek-v4-pro": { output: 384000 },
+  "deepseek/deepseek-v4-flash": { output: 384000 },
+  "Qwen/Qwen3.6-Max-Preview": { output: 131072 },
+  "Qwen/Qwen3.6-Plus": { output: 131072 },
+  "Qwen/Qwen3.7-Max": { output: 131072 },
+  "stepfun/Step-3.5-Flash": { output: 131072 },
+  "google/gemini-3.5-flash": { output: 65536 },
+  "google/gemini-3.1-flash-lite": { output: 65536 },
 }
 
 async function fetchModelList(): Promise<EndpointModel[]> {
@@ -260,7 +261,7 @@ function buildModelEntry(model: EndpointModel, costMap: Map<string, CostEntry>):
 
   const meta = MODEL_META[model.id]
   const limit = {
-    context: model.context_length ?? FALLBACK_LIMITS[model.id]?.context ?? 200000,
+    context: model.context_length ?? 200000,
     output: FALLBACK_LIMITS[model.id]?.output ?? 65536,
   }
 

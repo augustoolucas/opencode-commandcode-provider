@@ -10,7 +10,8 @@ function loadPluginConfig(): { disableModelSync?: boolean } {
   if (!existsSync(configPath)) return {}
   try {
     return JSON.parse(readFileSync(configPath, "utf-8"))
-  } catch {
+  } catch (err) {
+    console.warn(`Command Code provider: failed to parse config at ${configPath} — falling through to API sync.`, err)
     return {}
   }
 }
@@ -64,7 +65,8 @@ async function fetchModelsFromApi(): Promise<ApiModel[] | null> {
     if (!resp.ok) return null
     const data = (await resp.json()) as { data?: ApiModel[] }
     return data.data ?? null
-  } catch {
+  } catch (err) {
+    console.warn("Command Code provider: failed to fetch model list from API.", err)
     return null
   } finally {
     clearTimeout(timeout)
