@@ -404,13 +404,13 @@ test("doStream sends retry-specific log messages on 5xx", { timeout: 15000 }, as
   ])
 
   const errors: string[] = []
-  const origError = console.error
-  console.error = (...args: any[]) => errors.push(args.join(" "))
+  const origDebug = console.debug
+  console.debug = (...args: any[]) => errors.push(args.join(" "))
 
   const model = makeModel()
   await model.doStream(makeCallOptions())
 
-  console.error = origError
+  console.debug = origDebug
   restore()
 
   expect(errors.some((e) => e.includes("[CC-Retry]") && e.includes("HTTP 502"))).toBe(true)

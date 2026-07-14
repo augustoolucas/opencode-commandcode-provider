@@ -398,3 +398,24 @@ test("config hook falls through to API on corrupt config file", async () => {
     expect(headers["Authorization"]).toBe("Bearer sk-test")
   })
 })
+
+test("config hook passes through variants for models that have them", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels(
+    [{
+      ...sampleModel(),
+      variants: { low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" } },
+    }],
+    [],
+  )
+  expect(models["model-a"].variants).toEqual({
+    low: { reasoningEffort: "low" },
+    high: { reasoningEffort: "high" },
+  })
+})
+
+test("config hook does not set variants on models without them", async () => {
+  process.env.COMMANDCODE_API_KEY = "sk-test"
+  const models = await getMergedModels([sampleModel()], [])
+  expect(models["model-a"].variants).toBeUndefined()
+})

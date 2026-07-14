@@ -225,3 +225,29 @@ test("envelope has correct top-level shape", () => {
   expect(req).toHaveProperty("permissionMode", "standard")
   expect(req).toHaveProperty("params")
 })
+
+test("maps providerOptions.reasoningEffort to params.reasoning_effort", () => {
+  const req = buildRequest("deepseek/deepseek-v4-pro", makeOpts({
+    providerOptions: { commandcode: { reasoningEffort: "high" } },
+  }))
+  expect(req.params.reasoning_effort).toBe("high")
+})
+
+test("does not set reasoning_effort when providerOptions is undefined", () => {
+  const req = buildRequest("deepseek/deepseek-v4-pro", makeOpts())
+  expect(req.params.reasoning_effort).toBeUndefined()
+})
+
+test("maps providerOptions.thinking to params.thinking", () => {
+  const req = buildRequest("MiniMaxAI/MiniMax-M3", makeOpts({
+    providerOptions: { commandcode: { thinking: { type: "adaptive" } } },
+  }))
+  expect(req.params.thinking).toEqual({ type: "adaptive" })
+})
+
+test("does not set thinking when thinking is not an object", () => {
+  const req = buildRequest("MiniMaxAI/MiniMax-M3", makeOpts({
+    providerOptions: { commandcode: { thinking: "enabled" } },
+  }))
+  expect(req.params.thinking).toBeUndefined()
+})
