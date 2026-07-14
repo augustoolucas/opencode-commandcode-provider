@@ -10,7 +10,8 @@ import type {
 } from "@ai-sdk/provider"
 import { buildRequest } from "./convert.js"
 import { parseStreamEvents } from "./stream.js"
-import { gatherContext } from "./context.js"
+import { gatherContext, type ProjectContext } from "./context.js"
+import { wrapAsError } from "./errors.js"
 
 const DEFAULT_BASE_URL = "https://api.commandcode.ai"
 // x-command-code-version must match the Command Code CLI version for API compatibility
@@ -141,31 +142,6 @@ function describeError(err: unknown): string {
   }
 }
 
-function wrapAsError(err: unknown): Error {
-  if (err instanceof Error) return err
-  if (typeof err === "string") return new Error(err)
-  const e = err as Record<string, unknown>
-  const nested = e.error as Record<string, unknown> | undefined
-  const message =
-    (typeof e.message === "string" && e.message) ||
-    (typeof nested?.message === "string" && nested.message) ||
-    (typeof e.msg === "string" && e.msg) ||
-    (() => {
-      try {
-        return JSON.stringify(err)
-      } catch {
-        return "Unknown error"
-      }
-    })()
-  const type =
-    (typeof e.type === "string" && e.type) ||
-    (typeof nested?.type === "string" && nested.type) ||
-    undefined
-  const error = new Error(type ? `${type}: ${message}` : String(message))
-  Object.assign(error, { ccError: err, ...(type ? { code: type } : {}) })
-  return error
-}
-
 function partialOutputError(original: unknown): Error {
   const err = new Error(
     `Command Code stream failed after partial output was already emitted; reconnect aborted to avoid duplicate content. Original error: ${describeError(original)}`,
@@ -224,10 +200,18 @@ export class CommandCodeLanguageModel implements LanguageModelV3 {
   supportedUrls: Record<string, RegExp[]> = {}
 
   private opts: CommandCodeModelOptions
+  private _contextCache?: ProjectContext
 
   constructor(modelId: string, opts: CommandCodeModelOptions) {
     this.modelId = modelId
     this.opts = opts
+  }
+
+  private getContext(): ProjectContext {
+    if (!this._contextCache) {
+      this._contextCache = gatherContext()
+    }
+    return this._contextCache
   }
 
   private get baseURL(): string {
@@ -258,7 +242,7 @@ export class CommandCodeLanguageModel implements LanguageModelV3 {
         const err = await buildHttpError(response, this.modelId)
         if (isRetryableStatus(response.status) && attempt < maxRetries) {
           const delay = backoffDelay(attempt)
-          console.error(
+          console.debug(
             `[CC-Retry] HTTP ${response.status} (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${Math.round(delay)}ms: ${err.message}`,
           )
           await sleep(delay)
@@ -326,7 +310,7 @@ export class CommandCodeLanguageModel implements LanguageModelV3 {
               if (shouldRetry(reconnectErr, emittedContent, attempt, maxRetries, isAborted())) {
                 attempt++
                 const delay = backoffDelay(attempt - 1)
-                console.error(
+                console.debug(
                   `[CC-Retry-Stream] reconnect failed (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(delay)}ms: ${describeError(reconnectErr)}`,
                 )
                 await sleep(delay)
@@ -349,7 +333,7 @@ export class CommandCodeLanguageModel implements LanguageModelV3 {
             if (shouldRetry(err, emittedContent, attempt, maxRetries, isAborted())) {
               attempt++
               const delay = backoffDelay(attempt - 1)
-              console.error(
+              console.debug(
                 `[CC-Retry-Stream] mid-stream disconnect (attempt ${attempt}/${maxRetries}), reconnecting in ${Math.round(delay)}ms: ${describeError(err)}`,
               )
               await sleep(delay)
@@ -390,7 +374,7 @@ export class CommandCodeLanguageModel implements LanguageModelV3 {
             if (shouldRetry(inner, emittedContent, attempt, maxRetries, isAborted())) {
               attempt++
               const delay = backoffDelay(attempt - 1)
-              console.error(
+              console.debug(
                 `[CC-Retry-Stream] error part (attempt ${attempt}/${maxRetries}), reconnecting in ${Math.round(delay)}ms: ${describeError(inner)}`,
               )
               await sleep(delay)
@@ -416,7 +400,7 @@ export class CommandCodeLanguageModel implements LanguageModelV3 {
   }
 
   async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-    const context = gatherContext()
+    const context = this.getContext()
     const body = buildRequest(this.modelId, options, context)
     const requestBody = JSON.stringify(body)
 
