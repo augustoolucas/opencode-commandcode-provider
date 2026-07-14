@@ -2,6 +2,10 @@
 
 [Command Code](https://commandcode.ai) API provider for [opencode](https://opencode.ai). Use Claude, GPT, Gemini, DeepSeek, Qwen, Kimi, GLM, MiniMax, Step, and other models through a single API key.
 
+## Fork Notice
+
+This is a community-maintained fork of [brent-weatherall/opencode-commandcode-provider](https://github.com/brent-weatherall/opencode-commandcode-provider). It includes features not present upstream: reasoning level variants (DeepSeek, Mimo, MiniMax M3), automatic retry/backoff, SSE error propagation, and project context for plan mode. Contributions welcome.
+
 ## Quick Start
 
 ### 1. Install
@@ -109,10 +113,24 @@ When this file exists with `disableModelSync: true`, the plugin skips the API fe
 
 Models are automatically synced from the CommandCode API at startup. Context sizes and new models are updated on each restart. The local [`models.json`](./models.json) serves as an offline fallback.
 
+## Reasoning Level Selection
+
+Some models support reasoning level (variant) selection via opencode's `/models` UI:
+
+| Model | Variants |
+|---|---|
+| `deepseek/deepseek-v4-pro`  | none, low, medium, high, max |
+| `deepseek/deepseek-v4-flash` | none, low, medium, high, max |
+| `xiaomi/mimo-v2.5`          | low, medium, high |
+| `xiaomi/mimo-v2.5-pro`      | low, medium, high |
+| `MiniMaxAI/MiniMax-M3`      | none, thinking |
+
+Selecting a variant passes the corresponding `reasoningEffort` or `thinking` parameter to the CommandCode API.
+
 ## Development
 
 ```bash
-git clone https://github.com/brent-weatherall/commandcode-go-opencode-provider.git
+git clone https://github.com/augustoolucas/commandcode-go-opencode-provider.git
 cd commandcode-go-opencode-provider
 bun install
 ```
